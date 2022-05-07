@@ -1,0 +1,20 @@
+{
+  "name": "jp.kshoji.midisystem",
+  "displayName": "RTP-MIDI",
+  "description": "RTP-MIDI porting for .NET / Unity",
+  "version": "1.0.0",
+  "unity": "2018.4",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kshoji/RTP-MIDI-for-.NET.git"
+  },
+  "author": "Kaoru Shoji <0x0badc0de@gmail.com> (https://github.com/kshoji)",
+  "changelogUrl": "https://github.com/kshoji/RTP-MIDI-for-.NET/blob/main/CHANGELOG.md",
+  "documentationUrl": "https://github.com/kshoji/RTP-MIDI-for-.NET/blob/main/Documentation~/jp.kshoji.rtpmidi.md",
+  "licensesUrl": "https://github.com/kshoji/RTP-MIDI-for-.NET/blob/main/LICENSE",
+  "keywords": [
+    "midi",
+    "rtp"
+  ]
+}

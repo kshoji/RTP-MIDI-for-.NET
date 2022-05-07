@@ -58,8 +58,8 @@ sysinfo.txt
 # Crashlytics generated file
 crashlytics-build.properties
 
-RTP-MIDI-for-.NET/bin
-RTP-MIDI-for-.NET/obj
-RTP-MIDI-for-.NET/bin.meta
-RTP-MIDI-for-.NET/obj.meta
 .idea
+Runtime/bin
+Runtime/obj
+Runtime/bin.meta
+Runtime/obj.meta

@@ -44,24 +44,17 @@ namespace jp.kshoji.rtpmidi
 
             return $"{participant.sessionName},${participant.ssrc}";
         }
-        
+
         /// <summary>
         /// Constructor
         /// </summary>
         /// <param name="sessionName">the session name</param>
         /// <param name="listenPort">UDP control port(0-65534)</param>
         /// <param name="deviceConnectionListener">device connection listener</param>
-        public RtpMidiServer(string sessionName, int listenPort, IRtpMidiDeviceConnectionListener deviceConnectionListener)
+        /// <param name="rtpMidiEventHandler">MIDI event handler</param>
+        public RtpMidiServer(string sessionName, int listenPort, IRtpMidiDeviceConnectionListener deviceConnectionListener, IRtpMidiEventHandler rtpMidiEventHandler)
         {
             session = new RtpMidiSession(sessionName, listenPort, deviceConnectionListener);
-        }
-
-        /// <summary>
-        /// Set a <see cref="IRtpMidiEventHandler"/> to receive MIDI events
-        /// </summary>
-        /// <param name="rtpMidiEventHandler"></param>
-        public void SetMidiEventListener(IRtpMidiEventHandler rtpMidiEventHandler)
-        {
             session.SetMidiEventListener(rtpMidiEventHandler);
         }
 

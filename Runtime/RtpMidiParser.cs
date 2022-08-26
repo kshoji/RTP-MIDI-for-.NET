@@ -462,7 +462,7 @@ namespace jp.kshoji.rtpmidi
                 {
                     for (var i = 0; i < minimumLength; i++)
                     {
-                        var toRemove = bufferData.First.Value;
+                        var toRemove = bufferData.First?.Value;
                         bufferData.RemoveFirst();
                     }
 
@@ -489,7 +489,7 @@ namespace jp.kshoji.rtpmidi
                     // TODO parse Single-packet loss
                     for (var i = 0; i < minimumLength; i++)
                     {
-                        var toRemove = bufferData.First.Value;
+                        var toRemove = bufferData.First?.Value;
                         bufferData.RemoveFirst();
                     }
 
@@ -553,7 +553,7 @@ namespace jp.kshoji.rtpmidi
                 // System Journal Length: 3
                 for (var i = 0; i < minimumLength; i++)
                 {
-                    var toRemove = bufferData.First.Value;
+                    var toRemove = bufferData.First?.Value;
                     bufferData.RemoveFirst();
                 }
 
@@ -592,7 +592,7 @@ namespace jp.kshoji.rtpmidi
                 
                 for (var i = 0; i < chanjourlen; i++)
                 {
-                    var toRemove = bufferData.First.Value;
+                    var toRemove = bufferData.First?.Value;
                     bufferData.RemoveFirst();
                 }
 

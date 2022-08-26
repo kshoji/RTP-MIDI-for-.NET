@@ -37,12 +37,7 @@ namespace jp.kshoji.rtpmidi
         public string GetDeviceName(string deviceId)
         {
             var participant = session.GetParticipantFromDeviceId(deviceId);
-            if (participant == null)
-            {
-                return null;
-            }
-
-            return $"{participant.sessionName},${participant.ssrc}";
+            return participant == null ? null : $"{participant.sessionName},${participant.ssrc}";
         }
 
         /// <summary>
@@ -64,7 +59,7 @@ namespace jp.kshoji.rtpmidi
         /// <param name="endPoint"></param>
         public void ConnectToListener(IPEndPoint endPoint)
         {
-            session.SendInvite(endPoint, endPoint.Port);
+            session.SendInvite(endPoint);
         }
 
         /// <summary>
@@ -72,10 +67,7 @@ namespace jp.kshoji.rtpmidi
         /// </summary>
         public void Start()
         {
-            if (rtpMidiThread == null)
-            {
-                rtpMidiThread = new RtpMidiThread(session);
-            }
+            rtpMidiThread ??= new RtpMidiThread(session);
         }
 
         /// <summary>
@@ -84,12 +76,7 @@ namespace jp.kshoji.rtpmidi
         /// <returns>the thread is running</returns>
         public bool IsStarted()
         {
-            if (rtpMidiThread == null)
-            {
-                return false;
-            }
-
-            return rtpMidiThread.IsRunning;
+            return rtpMidiThread is {IsRunning: true};
         }
 
         /// <summary>
@@ -97,7 +84,7 @@ namespace jp.kshoji.rtpmidi
         /// </summary>
         public void Stop()
         {
-            rtpMidiThread.Stop();
+            rtpMidiThread?.Stop();
             rtpMidiThread = null;
         }
 
@@ -355,7 +342,7 @@ namespace jp.kshoji.rtpmidi
             public void Stop()
             {
                 IsRunning = false;
-                thread?.Interrupt();
+                thread.Interrupt();
             }
         }
     }

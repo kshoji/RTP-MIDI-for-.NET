@@ -15,13 +15,13 @@ namespace jp.kshoji.rtpmidi
         /// <summary>
         /// Initializes the clock instance
         /// </summary>
-        /// <param name="clockRate"></param>
-        public void Init(int clockRate)
+        /// <param name="clockRateValue"></param>
+        public void Init(int clockRateValue)
         {
-            this.clockRate = clockRate;
-            if (this.clockRate == 0)
+            clockRate = clockRateValue;
+            if (clockRate == 0)
             {
-                this.clockRate = MidiSamplingRateDefault;
+                clockRate = MidiSamplingRateDefault;
             }
             startTime = Ticks();
         }

@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Example": {
+      "commandName": "Project",
+      "commandLineArgs": "--serverPort 5006 --host 192.168.0.105 --port 5004"
+    }
+  }
+}

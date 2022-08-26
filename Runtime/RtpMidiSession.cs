@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using Random = System.Random;
@@ -80,8 +79,8 @@ namespace jp.kshoji.rtpmidi
 
         internal ParticipantKind kind;
         internal int ssrc;
-        internal IPEndPoint remoteIP;
-        internal int remotePort;
+        internal readonly IPEndPoint ControlEndPoint;
+        internal readonly IPEndPoint DataEndPoint;
 
         internal long receiverFeedbackStartTime;
         internal bool doReceiverFeedback;
@@ -117,9 +116,11 @@ namespace jp.kshoji.rtpmidi
         internal readonly RtpMidiJournal journal;
 #endif
 
-        internal RtpMidiParticipant(RtpMidiSession session)
+        internal RtpMidiParticipant(RtpMidiSession session, IPEndPoint endPoint)
         {
             rtpMidiParser = new RtpMidiParser(session);
+            ControlEndPoint = endPoint;
+            DataEndPoint = new IPEndPoint(endPoint.Address, endPoint.Port + 1);
 #if ENABLE_RTP_MIDI_JOURNAL
             journal = new RtpMidiJournal();
 #endif
@@ -138,16 +139,15 @@ namespace jp.kshoji.rtpmidi
         private readonly RtpMidiClock rtpMidiClock = new RtpMidiClock();
         private readonly Random random = new Random();
 
-        private const int DefaultControlPort = 5004;
-
         private UdpClient controlPort;
-        private IPEndPoint controlReceivedIPEndPoint;
+        private IPEndPoint controlReceivedEndPoint;
         private UdpClient dataPort;
-        private IPEndPoint dataReceivedIPEndPoint;
+        private IPEndPoint dataReceivedEndPoint;
         private const int MaxParticipants = 64;
         internal readonly HashSet<RtpMidiParticipant> participants = new HashSet<RtpMidiParticipant>();
+        private readonly HashSet<RtpMidiParticipant> participantsToRemove = new HashSet<RtpMidiParticipant>();
 
-        internal readonly LinkedList<byte> controlBuffer = new LinkedList<byte>();
+        private readonly LinkedList<byte> controlBuffer = new LinkedList<byte>();
 
         private readonly AppleMidiParser appleMidiParser;
 
@@ -207,10 +207,9 @@ namespace jp.kshoji.rtpmidi
         /// <summary>
         /// Start to connect with an another endpoint
         /// </summary>
-        /// <param name="ip">IP endpoint</param>
-        /// <param name="port">UDP control port(0-65534)</param>
+        /// <param name="endPoint">IP endpoint</param>
         /// <returns></returns>
-        public bool SendInvite(IPEndPoint ip, int port = DefaultControlPort)
+        public bool SendInvite(IPEndPoint endPoint)
         {
             lock (participants)
             {
@@ -219,11 +218,9 @@ namespace jp.kshoji.rtpmidi
                     return false;
                 }
 
-                var participant = new RtpMidiParticipant(this)
+                var participant = new RtpMidiParticipant(this, endPoint)
                 {
                     kind = ParticipantKind.Initiator,
-                    remoteIP = ip,
-                    remotePort = port,
                     lastInviteSentTime = RtpMidiClock.Ticks() - 1000,
                     lastSyncExchangeTime = RtpMidiClock.Ticks(),
                     initiatorToken = random.Next(),
@@ -278,7 +275,7 @@ namespace jp.kshoji.rtpmidi
         }
 
         /// <summary>
-        /// Obtains the artpicipant, from deviceId
+        /// Obtains the participant, from deviceId
         /// </summary>
         /// <param name="deviceId"></param>
         /// <returns>the listening port number(0-65535), or -1 if fails</returns>
@@ -296,7 +293,7 @@ namespace jp.kshoji.rtpmidi
         /// <summary>
         /// Stops all RTP MIDI connection
         /// </summary>
-        public void SendEndSession()
+        private void SendEndSession()
         {
             lock (participants)
             {
@@ -310,7 +307,7 @@ namespace jp.kshoji.rtpmidi
         private void SendEndSession(RtpMidiParticipant participant)
         {
             var endSession = new RtpMidiEndSession(0, Ssrc);
-            WriteEndSession(participant.remoteIP.Address, participant.remotePort, endSession);
+            WriteEndSession(participant.ControlEndPoint, endSession);
         }
 
         private void SendSynchronization(RtpMidiParticipant participant)
@@ -326,7 +323,7 @@ namespace jp.kshoji.rtpmidi
                 Count = 0,
             };
 
-            WriteSynchronization(participant.remoteIP.Address, participant.remotePort + 1, synchronization);
+            WriteSynchronization(participant.DataEndPoint, synchronization);
 
             participant.Synchronizing = true;
             participant.synchronizationCount++;
@@ -368,6 +365,11 @@ namespace jp.kshoji.rtpmidi
         /// <returns></returns>
         public bool BeginTransmission(RtpMidiParticipant participant)
         {
+            if (dataPort == null)
+            {
+                return false;
+            }
+
             lock (participant.outMidiBuffer)
             {
                 if (participant.outMidiBuffer.Count > 0)
@@ -440,20 +442,30 @@ namespace jp.kshoji.rtpmidi
         {
             lock (participant.inMidiBuffer)
             {
-                var result = participant.inMidiBuffer.First();
+                var result = participant.inMidiBuffer.First?.Value;
+                if (!result.HasValue)
+                {
+                    return 0;
+                }
+
                 participant.inMidiBuffer.RemoveFirst();
-                return result;
+                return result.Value;
             }
         }
 
         internal void ReadDataPackets()
         {
+            if (dataPort == null)
+            {
+                return;
+            }
+
             var packetSize = dataPort.Available;
             while (packetSize > 0)
             {
                 IPEndPoint receivedEndpoint = null;
                 var received = dataPort.Receive(ref receivedEndpoint);
-                dataReceivedIPEndPoint = receivedEndpoint; 
+                dataReceivedEndPoint = receivedEndpoint; 
                 packetSize -= received.Length;
 
                 foreach (var participant in participants)
@@ -502,12 +514,17 @@ namespace jp.kshoji.rtpmidi
 
         internal int ReadControlPackets()
         {
+            if (controlPort == null)
+            {
+                return 0;
+            }
+
             var packetSize = controlPort.Available;
             while (packetSize > 0 && controlBuffer.Count < RtpMidiParticipant.MaxBufferSize)
             {
                 IPEndPoint receivedEndpoint = null;
                 var received = controlPort.Receive(ref receivedEndpoint);
-                controlReceivedIPEndPoint = receivedEndpoint;
+                controlReceivedEndPoint = receivedEndpoint;
                 packetSize -= received.Length;
 
                 foreach (var b in received)
@@ -566,20 +583,23 @@ namespace jp.kshoji.rtpmidi
                 return;
             }
 
+            if (controlReceivedEndPoint == null)
+            {
+                return;
+            }
+
             lock (participants)
             {
                 if (participants.Count >= MaxParticipants)
                 {
-                    WriteInvitation(controlPort, controlReceivedIPEndPoint, controlReceivedIPEndPoint.Port, invitation, RtpMidiConstants.InvitationRejected);
+                    WriteInvitation(controlPort, controlReceivedEndPoint, invitation, RtpMidiConstants.InvitationRejected);
                     exceptionListener?.OnError(RtpMidiExceptionKind.TooManyParticipantsException);
                 }
 
-                var participant = new RtpMidiParticipant(this)
+                var participant = new RtpMidiParticipant(this, controlReceivedEndPoint)
                 {
                     kind = ParticipantKind.Listener,
                     ssrc = invitation.Ssrc,
-                    remoteIP = controlReceivedIPEndPoint,
-                    remotePort = (short)controlReceivedIPEndPoint.Port,
                     lastSyncExchangeTime = RtpMidiClock.Ticks(),
                     sessionName = invitation.SessionName,
                 };
@@ -593,10 +613,7 @@ namespace jp.kshoji.rtpmidi
 
                 participants.Add(participant);
 
-                WriteInvitation(controlPort, participant.remoteIP, participant.remotePort, invitationAccepted, RtpMidiConstants.InvitationAccepted);
-
-                
-                deviceConnectionListener.OnRtpMidiDeviceAttached(GetDeviceId(participant));
+                WriteInvitation(controlPort, participant.ControlEndPoint, invitationAccepted, RtpMidiConstants.InvitationAccepted);
             }
         }
 
@@ -621,7 +638,10 @@ namespace jp.kshoji.rtpmidi
             var participant = GetParticipantBySsrc(invitation.Ssrc);
             if (participant == null)
             {
-                WriteInvitation(dataPort, dataReceivedIPEndPoint, dataReceivedIPEndPoint.Port, invitation, RtpMidiConstants.InvitationRejected);
+                if (dataReceivedEndPoint != null)
+                {
+                    WriteInvitation(dataPort, dataReceivedEndPoint, invitation, RtpMidiConstants.InvitationRejected);
+                }
                 exceptionListener?.OnError(RtpMidiExceptionKind.ParticipantNotFoundException);
                 return;
             }
@@ -632,7 +652,9 @@ namespace jp.kshoji.rtpmidi
                 InitiatorToken = invitation.InitiatorToken,
             };
 
-            WriteInvitation(dataPort, participant.remoteIP, participant.remotePort + 1, invitationAccepted, RtpMidiConstants.InvitationAccepted);
+            WriteInvitation(dataPort, participant.DataEndPoint, invitationAccepted, RtpMidiConstants.InvitationAccepted);
+                
+            deviceConnectionListener.OnRtpMidiDeviceAttached(GetDeviceId(participant));
 
             participant.kind = ParticipantKind.Listener;
         }
@@ -650,7 +672,7 @@ namespace jp.kshoji.rtpmidi
                 if ((participant.outMidiBuffer.Count) + 2 > RtpMidiParticipant.MaxBufferSize)
                 {
                     // buffer is almost full, only 1 more character
-                    if ((byte)MidiType.SystemExclusive == participant.outMidiBuffer.ToArray()[0])
+                    if ((byte)MidiType.SystemExclusive == participant.outMidiBuffer.First?.Value)
                     {
                         // Add Sysex at the end of this partial SysEx (in the last available slot) ...
                         participant.outMidiBuffer.AddLast((byte)MidiType.SystemExclusiveStart);
@@ -672,7 +694,7 @@ namespace jp.kshoji.rtpmidi
             }
         }
 
-        private void WriteInvitation(UdpClient udpClient, IPEndPoint remoteIP, int remotePort, RtpMidiInvitation invitation, byte[] command)
+        private void WriteInvitation(UdpClient udpClient, IPEndPoint endPoint, RtpMidiInvitation invitation, byte[] command)
         {
             var dataStream = new MemoryStream();
 
@@ -695,10 +717,10 @@ namespace jp.kshoji.rtpmidi
                 }
                 , 0, 8);
 
-            udpClient.Send(dataStream.ToArray(), (int)dataStream.Length, new IPEndPoint(remoteIP.Address, remotePort));
+            udpClient?.Send(dataStream.ToArray(), (int)dataStream.Length, endPoint);
         }
 
-        private void WriteReceiverFeedback(IPAddress remoteIP, int remotePort, RtpMidiReceiverFeedback receiverFeedback)
+        private void WriteReceiverFeedback(IPEndPoint endPoint, RtpMidiReceiverFeedback receiverFeedback)
         {
             var dataStream = new MemoryStream();
 
@@ -718,10 +740,10 @@ namespace jp.kshoji.rtpmidi
                 }
             ,0, 8);
 
-            controlPort.Send(dataStream.ToArray(), (int)dataStream.Length, new IPEndPoint(remoteIP, remotePort));
+            controlPort?.Send(dataStream.ToArray(), (int)dataStream.Length, endPoint);
         }
 
-        private void WriteSynchronization(IPAddress remoteIP, int remotePort, RtpMidiSynchronization synchronization)
+        private void WriteSynchronization(IPEndPoint endPoint, RtpMidiSynchronization synchronization)
         {
             var dataStream = new MemoryStream();
 
@@ -767,10 +789,10 @@ namespace jp.kshoji.rtpmidi
                 }
             ,0, 32);
 
-            dataPort.Send(dataStream.ToArray(), (int)dataStream.Length, new IPEndPoint(remoteIP, remotePort));
+            dataPort?.Send(dataStream.ToArray(), (int)dataStream.Length, endPoint);
         }
 
-        private void WriteEndSession(IPAddress remoteIP, int remotePort, RtpMidiEndSession endSession)
+        private void WriteEndSession(IPEndPoint controlEndPoint, RtpMidiEndSession endSession)
         {
             var dataStream = new MemoryStream();
 
@@ -791,7 +813,7 @@ namespace jp.kshoji.rtpmidi
                 }
             ,0, 8);
 
-            controlPort.Send(dataStream.ToArray(), (int)dataStream.Length, new IPEndPoint(remoteIP, remotePort));
+            controlPort?.Send(dataStream.ToArray(), (int)dataStream.Length, controlEndPoint);
         }
 
         private void WriteRtpMidi(RtpMidiParticipant participant)
@@ -807,17 +829,15 @@ namespace jp.kshoji.rtpmidi
         {
             var dataStream = new MemoryStream();
 
-            var rtp = new Rtp();
-
-            // First octet
-            rtp.vpxcc = 2 << 6;
-            
-            // second octet
-            rtp.mpayload = 97;
-
-            rtp.ssrc = Ssrc;
-
-            rtp.timestamp = (int)rtpMidiClock.Now();
+            var rtp = new Rtp
+            {
+                // First octet
+                vpxcc = 2 << 6,
+                // second octet
+                mpayload = 97,
+                ssrc = Ssrc,
+                timestamp = (int)rtpMidiClock.Now(),
+            };
 
             // increment the sequenceNr
             participant.sendSequenceNr++;
@@ -877,7 +897,9 @@ namespace jp.kshoji.rtpmidi
             }
 
             // write out the MIDI Section
-            dataStream.Write(participant.outMidiBuffer.ToArray(), 0, bufferLen);
+            var outMidiArray = new byte[bufferLen];
+            participant.outMidiBuffer.CopyTo(outMidiArray, 0);
+            dataStream.Write(outMidiArray, 0, bufferLen);
 
 #if ENABLE_RTP_MIDI_JOURNAL
             // write out the Journal Section
@@ -888,7 +910,7 @@ namespace jp.kshoji.rtpmidi
             }
 #endif
 
-            dataPort.Send(dataStream.ToArray(), (int)dataStream.Length, new IPEndPoint(participant.remoteIP.Address, participant.remotePort + 1));
+            dataPort?.Send(dataStream.ToArray(), (int)dataStream.Length, participant.DataEndPoint);
         }
 
         internal void ManageSessionInvites()
@@ -896,8 +918,6 @@ namespace jp.kshoji.rtpmidi
             // (Initiators only)
             lock (participants)
             {
-                var toRemove = new HashSet<RtpMidiParticipant>();
-
                 try
                 {
                     foreach (var participant in participants)
@@ -925,7 +945,7 @@ namespace jp.kshoji.rtpmidi
                                 // After too many attempts, stop.
                                 SendEndSession(participant);
 
-                                toRemove.Add(participant);
+                                participantsToRemove.Add(participant);
                                 exceptionListener?.OnError(RtpMidiExceptionKind.NoResponseFromConnectionRequestException);
                                 continue;
                             }
@@ -941,13 +961,13 @@ namespace jp.kshoji.rtpmidi
                             if (participant.invitationStatus == InviteStatus.Initiating ||
                                 participant.invitationStatus == InviteStatus.AwaitingControlInvitationAccepted)
                             {
-                                WriteInvitation(controlPort, participant.remoteIP, participant.remotePort, invitation, RtpMidiConstants.Invitation);
+                                WriteInvitation(controlPort, participant.ControlEndPoint, invitation, RtpMidiConstants.Invitation);
                                 participant.invitationStatus = InviteStatus.AwaitingControlInvitationAccepted;
                             }
                             else if (participant.invitationStatus == InviteStatus.ControlInvitationAccepted ||
                                      participant.invitationStatus == InviteStatus.AwaitingDataInvitationAccepted)
                             {
-                                WriteInvitation(dataPort, participant.remoteIP, participant.remotePort + 1, invitation, RtpMidiConstants.Invitation);
+                                WriteInvitation(dataPort, participant.DataEndPoint, invitation, RtpMidiConstants.Invitation);
                                 participant.invitationStatus = InviteStatus.AwaitingDataInvitationAccepted;
                             }
                         }
@@ -955,11 +975,12 @@ namespace jp.kshoji.rtpmidi
                 }
                 finally
                 {
-                    participants.RemoveWhere(item => toRemove.Contains(item));
-                    foreach (var participant in toRemove)
+                    foreach (var participant in participantsToRemove)
                     {
+                        participants.Remove(participant);
                         deviceConnectionListener.OnRtpMidiDeviceDetached(GetDeviceId(participant));
                     }
+                    participantsToRemove.Clear();
                 }
             }
         }
@@ -980,10 +1001,12 @@ namespace jp.kshoji.rtpmidi
 
                 if (RtpMidiClock.Ticks() - participant.receiverFeedbackStartTime > ReceiversFeedbackThreshold)
                 {
-                    var rf = new RtpMidiReceiverFeedback();
-                    rf.Ssrc = Ssrc;
-                    rf.SequenceNr = participant.receiveSequenceNr;
-                    WriteReceiverFeedback(participant.remoteIP.Address, participant.remotePort, rf);
+                    var rf = new RtpMidiReceiverFeedback
+                    {
+                        Ssrc = Ssrc,
+                        SequenceNr = participant.receiveSequenceNr,
+                    };
+                    WriteReceiverFeedback(participant.ControlEndPoint, rf);
 
                     // reset the clock. It is started when we receive MIDI
                     participant.doReceiverFeedback = false;
@@ -995,7 +1018,6 @@ namespace jp.kshoji.rtpmidi
         {
             lock (participants)
             {
-                var toRemove = new HashSet<RtpMidiParticipant>();
                 try
                 {
                     foreach (var participant in participants)
@@ -1015,7 +1037,7 @@ namespace jp.kshoji.rtpmidi
                             if (RtpMidiClock.Ticks() - participant.lastSyncExchangeTime > CkMaxTimeOut)
                             {
                                 SendEndSession(participant);
-                                toRemove.Add(participant);
+                                participantsToRemove.Add(participant);
                                 exceptionListener?.OnError(RtpMidiExceptionKind.ListenerTimeOutException);
                             }
                         }
@@ -1025,7 +1047,7 @@ namespace jp.kshoji.rtpmidi
                             {
                                 if (ManageSynchronizationInitiatorInvites(participant))
                                 {
-                                    toRemove.Add(participant);
+                                    participantsToRemove.Add(participant);
                                     exceptionListener?.OnError(RtpMidiExceptionKind.MaxAttemptsException);
                                 }
                             }
@@ -1038,11 +1060,12 @@ namespace jp.kshoji.rtpmidi
                 }
                 finally
                 {
-                    participants.RemoveWhere(item => toRemove.Contains(item));
-                    foreach (var participant in toRemove)
+                    foreach (var participant in participantsToRemove)
                     {
+                        participants.Remove(participant);
                         deviceConnectionListener.OnRtpMidiDeviceDetached(GetDeviceId(participant));
                     }
+                    participantsToRemove.Clear();
                 }
             }
         }
@@ -1130,7 +1153,7 @@ namespace jp.kshoji.rtpmidi
                         synchronization.Timestamps[1] = rtpMidiClock.Now();
                     }
                     synchronization.Count = 1;
-                    WriteSynchronization(participant.remoteIP.Address, participant.remotePort + 1, synchronization);
+                    WriteSynchronization(participant.DataEndPoint, synchronization);
                     break;
                 case 1:
                     // From session listener
@@ -1139,7 +1162,7 @@ namespace jp.kshoji.rtpmidi
                         synchronization.Timestamps[2] = rtpMidiClock.Now();
                     }
                     synchronization.Count = 2;
-                    WriteSynchronization(participant.remoteIP.Address, participant.remotePort + 1, synchronization);
+                    WriteSynchronization(participant.DataEndPoint, synchronization);
                     participant.Synchronizing = false;
                     break;
                 case 2:
@@ -1183,8 +1206,6 @@ namespace jp.kshoji.rtpmidi
             participant.connectionAttempts = 0;
             participant.invitationStatus = InviteStatus.ControlInvitationAccepted;
             participant.sessionName = invitationAccepted.SessionName;
-
-            deviceConnectionListener.OnRtpMidiDeviceAttached(GetDeviceId(participant));
         }
 
         private void ReceivedDataInvitationAccepted(RtpMidiInvitationAccepted invitationAccepted)

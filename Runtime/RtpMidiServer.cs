@@ -324,13 +324,12 @@ namespace jp.kshoji.rtpmidi
                         session.ManageSynchronization();
 
                         // wait for next data
-                        try
+                        if (thread != null)
                         {
-                            Thread.Sleep(10);
-                        }
-                        catch (ThreadInterruptedException)
-                        {
-                            // ignore exception
+                            lock (thread)
+                            {
+                                Monitor.Wait(thread, 10);
+                            }
                         }
                     }
                     session.End();
@@ -342,7 +341,10 @@ namespace jp.kshoji.rtpmidi
             public void Stop()
             {
                 IsRunning = false;
-                thread.Interrupt();
+                lock (thread)
+                {
+                    Monitor.PulseAll(thread);
+                }
             }
         }
     }

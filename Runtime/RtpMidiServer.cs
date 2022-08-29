@@ -67,7 +67,10 @@ namespace jp.kshoji.rtpmidi
         /// </summary>
         public void Start()
         {
-            rtpMidiThread ??= new RtpMidiThread(session);
+            if (rtpMidiThread == null)
+            {
+                rtpMidiThread = new RtpMidiThread(session);
+            }
         }
 
         /// <summary>
@@ -76,7 +79,12 @@ namespace jp.kshoji.rtpmidi
         /// <returns>the thread is running</returns>
         public bool IsStarted()
         {
-            return rtpMidiThread is {IsRunning: true};
+            if (rtpMidiThread == null)
+            {
+                return false;
+            }
+
+            return rtpMidiThread.IsRunning;
         }
 
         /// <summary>

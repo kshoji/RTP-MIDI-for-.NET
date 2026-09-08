@@ -290,20 +290,6 @@ namespace jp.kshoji.rtpmidi
             return GetParticipantBySsrc(Convert.ToInt32(deviceInfo[2]));
         }
 
-        /// <summary>
-        /// Stops all RTP MIDI connection
-        /// </summary>
-        private void SendEndSession()
-        {
-            lock (participants)
-            {
-                foreach (var participant in participants)
-                {
-                    SendEndSession(participant);
-                }
-            }
-        }
-
         private void SendEndSession(RtpMidiParticipant participant)
         {
             var endSession = new RtpMidiEndSession(0, Ssrc);
@@ -351,7 +337,22 @@ namespace jp.kshoji.rtpmidi
         /// </summary>
         public void End()
         {
-            SendEndSession();
+            List<RtpMidiParticipant> remainingParticipants;
+            lock (participants)
+            {
+                remainingParticipants = new List<RtpMidiParticipant>(participants);
+                foreach (var participant in remainingParticipants)
+                {
+                    SendEndSession(participant);
+                }
+                participants.Clear();
+                participantsToRemove.Clear();
+            }
+
+            foreach (var participant in remainingParticipants)
+            {
+                deviceConnectionListener.OnRtpMidiDeviceDetached(GetDeviceId(participant));
+            }
 
             controlPort?.Dispose();
             controlPort = null;

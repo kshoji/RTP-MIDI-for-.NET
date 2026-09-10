@@ -23,7 +23,7 @@ namespace jp.kshoji.rtpmidi
     }
 
     /// <summary>
-    /// Chapter N and Chapter E (RFC 6295 Appendix A.6, A.7).
+    /// Channel recovery journal chapters (RFC 6295 Appendix A).
     /// Encode is read-only with respect to recorded history and note reference counts.
     /// </summary>
     public static class RtpMidiNoteJournal
@@ -102,7 +102,7 @@ namespace jp.kshoji.rtpmidi
 
         /// <summary>
         /// Encodes a recovery journal whose checkpoint history is [C, I).
-        /// Chapter bodies are C, M, N, and E.
+        /// Chapter bodies are P, C, M, W, N, E, T, and A.
         /// </summary>
         public static byte[] Encode(
             IReadOnlyList<HistoryItem> history,
@@ -196,14 +196,13 @@ namespace jp.kshoji.rtpmidi
                 var body = offset + RtpMidiJournalSection.ChannelJournalHeaderLength;
                 var bodyEnd = offset + channelLength;
 
-                // P and W are not parsed yet. C and M precede N.
-                if ((toc & (TocP | TocW)) != 0)
+                var cursor = body;
+                if ((toc & TocP) == TocP &&
+                    !RtpMidiVoiceJournal.TryReadChapterP(journal, ref cursor, bodyEnd, channel, list))
                 {
-                    offset += channelLength;
-                    continue;
+                    return false;
                 }
 
-                var cursor = body;
                 if ((toc & TocC) == TocC &&
                     !RtpMidiControlJournal.TryReadChapterC(journal, ref cursor, bodyEnd, channel, list))
                 {
@@ -216,7 +215,30 @@ namespace jp.kshoji.rtpmidi
                     return false;
                 }
 
-                if (!TryApplyChannelNotes(journal, cursor, bodyEnd, toc, channel, list))
+                if ((toc & TocW) == TocW &&
+                    !RtpMidiVoiceJournal.TryReadChapterW(journal, ref cursor, bodyEnd, channel, list))
+                {
+                    return false;
+                }
+
+                if (!TryApplyChannelNotes(journal, ref cursor, bodyEnd, toc, channel, list))
+                {
+                    return false;
+                }
+
+                if ((toc & TocT) == TocT &&
+                    !RtpMidiVoiceJournal.TryReadChapterT(journal, ref cursor, bodyEnd, channel, list))
+                {
+                    return false;
+                }
+
+                if ((toc & TocA) == TocA &&
+                    !RtpMidiVoiceJournal.TryReadChapterA(journal, ref cursor, bodyEnd, channel, list))
+                {
+                    return false;
+                }
+
+                if (cursor != bodyEnd)
                 {
                     return false;
                 }
@@ -327,26 +349,48 @@ namespace jp.kshoji.rtpmidi
                     chapterE = EncodeChapterE(ons, offs, noteRefCount, channel, previousPacket, out chapterES, out hasE);
                 }
 
+                RtpMidiVoiceJournal.EncodeChannel(
+                    history,
+                    channel,
+                    packetSequenceI,
+                    checkpointC,
+                    out var voiceS,
+                    out var voiceToc,
+                    out var chapterP,
+                    out var chapterW,
+                    out var chapterTail,
+                    out var banks);
                 RtpMidiControlJournal.EncodeChannel(
                     history,
                     controlState,
                     channel,
                     packetSequenceI,
                     checkpointC,
+                    banks,
                     out var controlS,
                     out var controlToc,
                     out var controlBody);
-                if (!hasNotes && controlToc == 0)
+                if (!hasNotes && controlToc == 0 && voiceToc == 0)
                 {
                     continue;
                 }
 
-                var channelS = controlS && chapterNS && chapterES;
-                var toc = (byte)(controlToc | (hasNotes ? TocN : 0) | (hasE ? TocE : 0));
+                var channelS = voiceS && controlS && chapterNS && chapterES;
+                var toc = (byte)(voiceToc | controlToc | (hasNotes ? TocN : 0) | (hasE ? TocE : 0));
                 var body = new List<byte>();
+                if (chapterP.Length > 0)
+                {
+                    body.AddRange(chapterP);
+                }
+
                 if (controlBody.Length > 0)
                 {
                     body.AddRange(controlBody);
+                }
+
+                if (chapterW.Length > 0)
+                {
+                    body.AddRange(chapterW);
                 }
 
                 if (hasNotes)
@@ -356,6 +400,11 @@ namespace jp.kshoji.rtpmidi
                     {
                         body.AddRange(chapterE);
                     }
+                }
+
+                if (chapterTail.Length > 0)
+                {
+                    body.AddRange(chapterTail);
                 }
 
                 channels.Add(new ChannelJournal
@@ -573,7 +622,7 @@ namespace jp.kshoji.rtpmidi
 
         private static bool TryApplyChannelNotes(
             byte[] journal,
-            int body,
+            ref int cursor,
             int bodyEnd,
             byte toc,
             int channel,
@@ -588,7 +637,6 @@ namespace jp.kshoji.rtpmidi
                 releaseVelocity[i] = 64;
             }
 
-            var cursor = body;
             if ((toc & TocN) == TocN)
             {
                 if (!TryReadChapterN(journal, ref cursor, bodyEnd, ons, offs))

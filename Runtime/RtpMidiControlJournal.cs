@@ -257,6 +257,7 @@ namespace jp.kshoji.rtpmidi
             int channel,
             ushort packetSequenceI,
             ushort checkpointC,
+            ChapterPBanks banks,
             out bool s,
             out byte toc,
             out byte[] body)
@@ -265,7 +266,7 @@ namespace jp.kshoji.rtpmidi
             toc = 0;
             var chapters = new List<byte>();
             var previous = (ushort)(packetSequenceI - 1);
-            if (TryEncodeChapterC(history, state, channel, previous, checkpointC, packetSequenceI, out var chapterC, out var chapterCS))
+            if (TryEncodeChapterC(history, state, channel, previous, checkpointC, packetSequenceI, banks, out var chapterC, out var chapterCS))
             {
                 chapters.AddRange(chapterC);
                 toc |= RtpMidiNoteJournal.TocC;
@@ -400,6 +401,7 @@ namespace jp.kshoji.rtpmidi
             ushort previous,
             ushort checkpointC,
             ushort packetSequenceI,
+            ChapterPBanks banks,
             out byte[] bytes,
             out bool s)
         {
@@ -444,6 +446,7 @@ namespace jp.kshoji.rtpmidi
                     Kind = item.Meta.Kind,
                     PacketSequence = item.PacketSequence,
                     Order = thisOrder,
+                    HistoryIndex = i,
                 };
             }
 
@@ -451,6 +454,11 @@ namespace jp.kshoji.rtpmidi
             for (var number = 0; number < 128; number++)
             {
                 if (!latest[number].Present)
+                {
+                    continue;
+                }
+
+                if (OmitBankCodedInChapterP(number, latest[number], banks))
                 {
                     continue;
                 }
@@ -862,6 +870,21 @@ namespace jp.kshoji.rtpmidi
             body.Add((byte)(magnitude & 0xff));
         }
 
+        private static bool OmitBankCodedInChapterP(int number, ControllerLog log, ChapterPBanks banks)
+        {
+            if (number == 0 && banks.OmitMsb)
+            {
+                return log.HistoryIndex == banks.MsbHistoryIndex;
+            }
+
+            if (number == 32 && banks.OmitLsb)
+            {
+                return log.HistoryIndex == banks.LsbHistoryIndex;
+            }
+
+            return false;
+        }
+
         private static bool OmitAfterResetAllControllers(int number, int order, int lastResetOrder)
         {
             if (number == 7 || lastResetOrder < 0 || order > lastResetOrder)
@@ -955,6 +978,7 @@ namespace jp.kshoji.rtpmidi
             public LogKind Kind;
             public ushort PacketSequence;
             public int Order;
+            public int HistoryIndex;
         }
 
         private struct ParameterLog

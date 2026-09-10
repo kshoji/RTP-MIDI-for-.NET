@@ -6,7 +6,7 @@ namespace jp.kshoji.rtpmidi
     /// <summary>
     /// Send-side recovery journal. Record updates history only; Encode is read-only.
     /// Pending commands are assigned a packet sequence when that RTP packet is sent (after Encode for I).
-    /// Checkpoint history is coded as Chapters C, M, N, and E.
+    /// Checkpoint history is coded as Chapters P, C, M, W, N, E, T, and A.
     /// </summary>
     public class RtpMidiJournal
     {
@@ -60,7 +60,7 @@ namespace jp.kshoji.rtpmidi
 
         /// <summary>
         /// Encodes the recovery journal for RTP packet I with checkpoint C.
-        /// Chapter N and E cover checkpoint history; empty history forces C = I.
+        /// Channel chapters cover checkpoint history; empty history forces C = I.
         /// Does not mutate recorded history or note reference counts.
         /// </summary>
         public byte[] Encode(ushort packetSequenceI, ushort checkpointC)

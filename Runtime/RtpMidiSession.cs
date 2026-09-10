@@ -1605,6 +1605,18 @@ namespace jp.kshoji.rtpmidi
                 case MidiType.ControlChange:
                     rtpMidiEventHandler.OnMidiControlChange(deviceId, command.Channel, command.Data1, command.Data2);
                     break;
+                case MidiType.ProgramChange:
+                    rtpMidiEventHandler.OnMidiProgramChange(deviceId, command.Channel, command.Data1);
+                    break;
+                case MidiType.AfterTouchPoly:
+                    rtpMidiEventHandler.OnMidiPolyphonicAftertouch(deviceId, command.Channel, command.Data1, command.Data2);
+                    break;
+                case MidiType.AfterTouchChannel:
+                    rtpMidiEventHandler.OnMidiChannelAftertouch(deviceId, command.Channel, command.Data1);
+                    break;
+                case MidiType.PitchBend:
+                    rtpMidiEventHandler.OnMidiPitchWheel(deviceId, command.Channel, command.Data1 | (command.Data2 << 7));
+                    break;
             }
         }
 

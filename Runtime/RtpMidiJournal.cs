@@ -6,7 +6,7 @@ namespace jp.kshoji.rtpmidi
     /// <summary>
     /// Send-side recovery journal. Record updates history only; Encode is read-only.
     /// Pending commands are assigned a packet sequence when that RTP packet is sent (after Encode for I).
-    /// Checkpoint history is coded as Chapter N and Chapter E.
+    /// Checkpoint history is coded as Chapters C, M, N, and E.
     /// </summary>
     public class RtpMidiJournal
     {
@@ -14,11 +14,13 @@ namespace jp.kshoji.rtpmidi
         {
             public ushort PacketSequence;
             public byte[] Midi;
+            public RtpMidiControlJournal.ControlMeta Meta;
         }
 
         private readonly List<Entry> committed = new List<Entry>();
         private readonly List<byte[]> pending = new List<byte[]>();
         private readonly int[,] noteRefCount = new int[16, 128];
+        private readonly RtpMidiControlState controlState = new RtpMidiControlState();
         private bool hasSessionStart;
         private ushort sessionStartSequence;
 
@@ -71,10 +73,10 @@ namespace jp.kshoji.rtpmidi
             var history = new List<RtpMidiNoteJournal.HistoryItem>(committed.Count);
             for (var i = 0; i < committed.Count; i++)
             {
-                history.Add(new RtpMidiNoteJournal.HistoryItem(committed[i].PacketSequence, committed[i].Midi));
+                history.Add(new RtpMidiNoteJournal.HistoryItem(committed[i].PacketSequence, committed[i].Midi, committed[i].Meta));
             }
 
-            return RtpMidiNoteJournal.Encode(history, noteRefCount, packetSequenceI, checkpointC);
+            return RtpMidiNoteJournal.Encode(history, noteRefCount, controlState, packetSequenceI, checkpointC);
         }
 
         /// <summary>
@@ -103,7 +105,8 @@ namespace jp.kshoji.rtpmidi
 
             foreach (var midi in pending)
             {
-                committed.Add(new Entry { PacketSequence = packetSequence, Midi = midi });
+                var meta = controlState.Observe(midi);
+                committed.Add(new Entry { PacketSequence = packetSequence, Midi = midi, Meta = meta });
                 RtpMidiNoteJournal.ApplyCommitted(noteRefCount, midi);
             }
 

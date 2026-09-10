@@ -15,8 +15,8 @@ namespace RtpMidi.Tests
             Assert.Equal(0x81, chapter[0]); // B=1, LEN=1
             Assert.Equal(0xF0, chapter[1]); // LOW=15 HIGH=0, empty OFFBITS
             Assert.Equal(4, chapter.Length);
-            Assert.Equal(0x80 | (60 << 1) | 1, chapter[2]);
-            Assert.Equal(100, chapter[3]);
+            Assert.Equal(0x80 | 60, chapter[2]);
+            Assert.Equal(0x80 | 100, chapter[3]);
             Assert.Equal(0xA0, encoded[0]); // S=1, A=1, TOTCHAN=0
         }
 
@@ -63,8 +63,8 @@ namespace RtpMidi.Tests
             Assert.True(HasChapterE(encoded, 0));
             var extra = ChapterE(encoded, 0);
             Assert.Equal(0x80, extra[0]); // S=1, LEN=0 (one log)
-            Assert.Equal(0x80 | (60 << 1) | 1, extra[1]); // V=1
-            Assert.Equal(20, extra[2]);
+            Assert.Equal(0x80 | 60, extra[1]); // S=1, note 60
+            Assert.Equal(0x80 | 20, extra[2]); // V=1, velocity 20
         }
 
         [Fact]
@@ -76,11 +76,11 @@ namespace RtpMidi.Tests
                 (11, NoteOn(0, 60, 110)));
             var chapter = ChapterN(encoded, 0);
             Assert.Equal(1, chapter[0] & 0x7f);
-            Assert.Equal(110, chapter[3]); // most recent velocity
+            Assert.Equal(0x80 | 110, chapter[3]); // Y=1, most recent velocity
 
             var extra = ChapterE(encoded, 0);
-            Assert.Equal((60 << 1), extra[1]); // S=0 because the NoteOn is in packet I-1, V=0
-            Assert.Equal(2, extra[2]);
+            Assert.Equal(60, extra[1] & 0x7f); // S=0 because the NoteOn is in packet I-1
+            Assert.Equal(2, extra[2]); // V=0, count 2
         }
 
         [Fact]
@@ -93,7 +93,7 @@ namespace RtpMidi.Tests
                 (12, NoteOn(0, 62, 80)));
             var chapter = ChapterN(encoded, 0);
             Assert.Equal(1, chapter[0] & 0x7f);
-            Assert.Equal(62, (chapter[2] >> 1) & 0x7f);
+            Assert.Equal(62, chapter[2] & 0x7f);
             Assert.DoesNotContain(60, NoteLogNotes(chapter));
             Assert.DoesNotContain(60, OffNotes(chapter));
         }
@@ -105,7 +105,7 @@ namespace RtpMidi.Tests
                 12,
                 (10, NoteOn(0, 60, 100)),
                 (11, new byte[] { 0xb0, 120, 0 }));
-            Assert.Equal(0, encodedFlags(soundOff) & 0x20);
+            Assert.Equal(0, soundOff[ChannelHeaderOffset(soundOff, 0) + 2] & RtpMidiNoteJournal.TocN);
 
             var reset = EncodeCommitted(
                 12,
@@ -266,7 +266,7 @@ namespace RtpMidi.Tests
 
         private static byte[] ChapterN(byte[] journal, int channelIndex)
         {
-            var offset = ChannelBody(journal, channelIndex);
+            var offset = SkipToChapter(journal, channelIndex, RtpMidiNoteJournal.TocN);
             var toc = journal[ChannelHeaderOffset(journal, channelIndex) + 2];
             Assert.Equal(RtpMidiNoteJournal.TocN, toc & RtpMidiNoteJournal.TocN);
             var length = ChapterNLength(journal, offset);
@@ -277,13 +277,38 @@ namespace RtpMidi.Tests
 
         private static byte[] ChapterE(byte[] journal, int channelIndex)
         {
-            var body = ChannelBody(journal, channelIndex);
-            var nLength = ChapterNLength(journal, body);
-            var start = body + nLength;
+            var start = SkipToChapter(journal, channelIndex, RtpMidiNoteJournal.TocE);
             var logs = (journal[start] & 0x7f) + 1;
             var chapter = new byte[1 + (logs * 2)];
             System.Buffer.BlockCopy(journal, start, chapter, 0, chapter.Length);
             return chapter;
+        }
+
+        private static int SkipToChapter(byte[] journal, int channelIndex, byte chapterBit)
+        {
+            var offset = ChannelBody(journal, channelIndex);
+            var toc = journal[ChannelHeaderOffset(journal, channelIndex) + 2];
+            if ((toc & RtpMidiNoteJournal.TocC) == RtpMidiNoteJournal.TocC && chapterBit != RtpMidiNoteJournal.TocC)
+            {
+                offset += 1 + (((journal[offset] & 0x7f) + 1) * 2);
+            }
+
+            if ((toc & RtpMidiNoteJournal.TocM) == RtpMidiNoteJournal.TocM &&
+                chapterBit != RtpMidiNoteJournal.TocC &&
+                chapterBit != RtpMidiNoteJournal.TocM)
+            {
+                offset += RtpMidiJournalSection.ReadLength10(journal[offset], journal[offset + 1]);
+            }
+
+            if ((toc & RtpMidiNoteJournal.TocN) == RtpMidiNoteJournal.TocN &&
+                chapterBit != RtpMidiNoteJournal.TocN &&
+                chapterBit != RtpMidiNoteJournal.TocC &&
+                chapterBit != RtpMidiNoteJournal.TocM)
+            {
+                offset += ChapterNLength(journal, offset);
+            }
+
+            return offset;
         }
 
         private static bool HasChapterE(byte[] journal, int channelIndex)
@@ -340,7 +365,7 @@ namespace RtpMidi.Tests
             var logs = len == 127 && low == 15 && high == 0 ? 128 : len;
             for (var i = 0; i < logs; i++)
             {
-                notes.Add((chapter[2 + (i * 2)] >> 1) & 0x7f);
+                notes.Add(chapter[2 + (i * 2)] & 0x7f);
             }
 
             return notes;

@@ -40,13 +40,20 @@ namespace jp.kshoji.rtpmidi
         public readonly struct HistoryItem
         {
             public HistoryItem(ushort packetSequence, byte[] midi)
+                : this(packetSequence, midi, default)
+            {
+            }
+
+            public HistoryItem(ushort packetSequence, byte[] midi, RtpMidiControlJournal.ControlMeta meta)
             {
                 PacketSequence = packetSequence;
                 Midi = midi;
+                Meta = meta;
             }
 
             public ushort PacketSequence { get; }
             public byte[] Midi { get; }
+            public RtpMidiControlJournal.ControlMeta Meta { get; }
         }
 
         /// <summary>
@@ -84,17 +91,32 @@ namespace jp.kshoji.rtpmidi
             }
         }
 
+        public static byte[] Encode(
+            IReadOnlyList<HistoryItem> history,
+            int[,] noteRefCount,
+            ushort packetSequenceI,
+            ushort checkpointC)
+        {
+            return Encode(history, noteRefCount, null, packetSequenceI, checkpointC);
+        }
+
         /// <summary>
-        /// Encodes a recovery journal whose checkpoint history is [C, I). Chapter bodies are N and E only.
+        /// Encodes a recovery journal whose checkpoint history is [C, I).
+        /// Chapter bodies are C, M, N, and E.
         /// </summary>
-        public static byte[] Encode(IReadOnlyList<HistoryItem> history, int[,] noteRefCount, ushort packetSequenceI, ushort checkpointC)
+        public static byte[] Encode(
+            IReadOnlyList<HistoryItem> history,
+            int[,] noteRefCount,
+            RtpMidiControlState controlState,
+            ushort packetSequenceI,
+            ushort checkpointC)
         {
             if (history == null || checkpointC == packetSequenceI)
             {
                 return RtpMidiJournalSection.EncodeEmpty(checkpointC);
             }
 
-            var channels = BuildChannels(history, noteRefCount, packetSequenceI, checkpointC);
+            var channels = BuildChannels(history, noteRefCount, controlState, packetSequenceI, checkpointC);
             if (channels.Count == 0)
             {
                 return RtpMidiJournalSection.EncodeEmpty(checkpointC);
@@ -174,13 +196,29 @@ namespace jp.kshoji.rtpmidi
                 var body = offset + RtpMidiJournalSection.ChannelJournalHeaderLength;
                 var bodyEnd = offset + channelLength;
 
-                // P/C/M/W precede N. Phase 3 cannot skip those chapters, so do not apply a partial channel.
-                if ((toc & (TocP | TocC | TocM | TocW)) == 0)
+                // P and W are not parsed yet. C and M precede N.
+                if ((toc & (TocP | TocW)) != 0)
                 {
-                    if (!TryApplyChannelNotes(journal, body, bodyEnd, toc, channel, list))
-                    {
-                        return false;
-                    }
+                    offset += channelLength;
+                    continue;
+                }
+
+                var cursor = body;
+                if ((toc & TocC) == TocC &&
+                    !RtpMidiControlJournal.TryReadChapterC(journal, ref cursor, bodyEnd, channel, list))
+                {
+                    return false;
+                }
+
+                if ((toc & TocM) == TocM &&
+                    !RtpMidiControlJournal.TryReadChapterM(journal, ref cursor, bodyEnd, channel, list))
+                {
+                    return false;
+                }
+
+                if (!TryApplyChannelNotes(journal, cursor, bodyEnd, toc, channel, list))
+                {
+                    return false;
                 }
 
                 offset += channelLength;
@@ -192,6 +230,7 @@ namespace jp.kshoji.rtpmidi
         private static List<ChannelJournal> BuildChannels(
             IReadOnlyList<HistoryItem> history,
             int[,] noteRefCount,
+            RtpMidiControlState controlState,
             ushort packetSequenceI,
             ushort checkpointC)
         {
@@ -272,19 +311,51 @@ namespace jp.kshoji.rtpmidi
 
                 if (ons.Count == 0 && offs.Count == 0)
                 {
-                    continue;
+                    ons.Clear();
                 }
 
                 ons.Sort((a, b) => a.Order.CompareTo(b.Order));
-                var chapterN = EncodeChapterN(ons, offs, noteOffInPrevious[channel], previousPacket, out var chapterNS);
-                var chapterE = EncodeChapterE(ons, offs, noteRefCount, channel, previousPacket, out var chapterES, out var hasE);
-                var channelS = chapterNS && chapterES;
-                var toc = (byte)(TocN | (hasE ? TocE : 0));
-                var body = new List<byte>();
-                body.AddRange(chapterN);
-                if (hasE)
+                var hasNotes = ons.Count > 0 || offs.Count > 0;
+                byte[] chapterN = Array.Empty<byte>();
+                byte[] chapterE = Array.Empty<byte>();
+                var chapterNS = true;
+                var chapterES = true;
+                var hasE = false;
+                if (hasNotes)
                 {
-                    body.AddRange(chapterE);
+                    chapterN = EncodeChapterN(ons, offs, noteOffInPrevious[channel], previousPacket, out chapterNS);
+                    chapterE = EncodeChapterE(ons, offs, noteRefCount, channel, previousPacket, out chapterES, out hasE);
+                }
+
+                RtpMidiControlJournal.EncodeChannel(
+                    history,
+                    controlState,
+                    channel,
+                    packetSequenceI,
+                    checkpointC,
+                    out var controlS,
+                    out var controlToc,
+                    out var controlBody);
+                if (!hasNotes && controlToc == 0)
+                {
+                    continue;
+                }
+
+                var channelS = controlS && chapterNS && chapterES;
+                var toc = (byte)(controlToc | (hasNotes ? TocN : 0) | (hasE ? TocE : 0));
+                var body = new List<byte>();
+                if (controlBody.Length > 0)
+                {
+                    body.AddRange(controlBody);
+                }
+
+                if (hasNotes)
+                {
+                    body.AddRange(chapterN);
+                    if (hasE)
+                    {
+                        body.AddRange(chapterE);
+                    }
                 }
 
                 channels.Add(new ChannelJournal
@@ -356,8 +427,8 @@ namespace jp.kshoji.rtpmidi
                     s = false;
                 }
 
-                bytes[offset++] = (byte)((logS ? 0x80 : 0) | ((on.Note & 0x7f) << 1) | 0x01);
-                bytes[offset++] = (byte)(on.Velocity & 0x7f);
+                bytes[offset++] = (byte)((logS ? 0x80 : 0) | (on.Note & 0x7f));
+                bytes[offset++] = (byte)(0x80 | (on.Velocity & 0x7f));
             }
 
             for (var octet = 0; octet < offOctets; octet++)
@@ -436,8 +507,8 @@ namespace jp.kshoji.rtpmidi
             for (var i = 0; i < logs.Count; i++)
             {
                 var log = logs[i];
-                bytes[offset++] = (byte)((log.S ? 0x80 : 0) | ((log.Note & 0x7f) << 1) | (log.VelocityLog ? 1 : 0));
-                bytes[offset++] = (byte)(log.Value & 0x7f);
+                bytes[offset++] = (byte)((log.S ? 0x80 : 0) | (log.Note & 0x7f));
+                bytes[offset++] = (byte)((log.VelocityLog ? 0x80 : 0) | (log.Value & 0x7f));
             }
 
             hasChapter = true;
@@ -539,8 +610,23 @@ namespace jp.kshoji.rtpmidi
                 return true;
             }
 
-            // Damper timing is not in the journal; silence sustain if placement is unknown.
-            commands.Add(new RecoveredMidi(MidiType.ControlChange, channel, 64, 0));
+            // Damper timing is not in the journal. Silence sustain unless Chapter C already recovered it.
+            var sustainRestored = false;
+            for (var i = 0; i < commands.Count; i++)
+            {
+                if (commands[i].Type == MidiType.ControlChange &&
+                    commands[i].Channel == channel &&
+                    commands[i].Data1 == 64)
+                {
+                    sustainRestored = true;
+                    break;
+                }
+            }
+
+            if (!sustainRestored)
+            {
+                commands.Add(new RecoveredMidi(MidiType.ControlChange, channel, 64, 0));
+            }
             for (var i = 0; i < offs.Count; i++)
             {
                 var note = offs[i];
@@ -601,8 +687,8 @@ namespace jp.kshoji.rtpmidi
 
             for (var i = 0; i < logCount; i++)
             {
-                var note = (journal[cursor] >> 1) & 0x7f;
-                var play = (journal[cursor] & 0x01) == 1;
+                var note = journal[cursor] & 0x7f;
+                var play = (journal[cursor + 1] & 0x80) != 0;
                 var velocity = journal[cursor + 1] & 0x7f;
                 cursor += 2;
                 if (velocity == 0)
@@ -651,8 +737,8 @@ namespace jp.kshoji.rtpmidi
 
             for (var i = 0; i < logCount; i++)
             {
-                var note = (journal[cursor] >> 1) & 0x7f;
-                var velocityLog = (journal[cursor] & 0x01) == 1;
+                var note = journal[cursor] & 0x7f;
+                var velocityLog = (journal[cursor + 1] & 0x80) != 0;
                 var value = journal[cursor + 1] & 0x7f;
                 cursor += 2;
                 if (velocityLog)

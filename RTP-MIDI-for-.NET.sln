@@ -5,6 +5,8 @@ VisualStudioVersion = 17.3.32804.467
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Runtime", "Runtime\Runtime.csproj", "{2ED09694-5569-4CFC-9B9F-325CD29BCE6A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RtpMidi.Tests", "Tests~\RtpMidi.Tests\RtpMidi.Tests.csproj", "{8F3A2C1D-4B5E-6F70-8192-A3B4C5D6E7F8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -19,6 +21,10 @@ Global
 		{2ED09694-5569-4CFC-9B9F-325CD29BCE6A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{2ED09694-5569-4CFC-9B9F-325CD29BCE6A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2ED09694-5569-4CFC-9B9F-325CD29BCE6A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8F3A2C1D-4B5E-6F70-8192-A3B4C5D6E7F8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8F3A2C1D-4B5E-6F70-8192-A3B4C5D6E7F8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8F3A2C1D-4B5E-6F70-8192-A3B4C5D6E7F8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8F3A2C1D-4B5E-6F70-8192-A3B4C5D6E7F8}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

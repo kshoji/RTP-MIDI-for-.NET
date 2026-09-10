@@ -223,6 +223,14 @@ _pkginfo.txt
 ClientBin/
 ~$*
 *~
+# Keep Unity-style project folders ending in ~ (not editor backup files)
+!Tests~/
+!Tests~/**
+!Documentation~/
+!Documentation~/**
+# Negation above re-includes build outputs; keep them ignored
+Tests~/**/[Bb]in/
+Tests~/**/[Oo]bj/
 *.dbmdl
 *.dbproj.schemaview
 *.jfm

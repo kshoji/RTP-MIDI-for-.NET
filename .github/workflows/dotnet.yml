@@ -21,5 +21,7 @@ jobs:
       run: dotnet restore
     - name: Build
       run: dotnet build --no-restore
+    - name: Build with journaling
+      run: dotnet build --no-restore -p:EnableRtpMidiJournal=true
     - name: Test
-      run: dotnet test --no-build --verbosity normal
+      run: dotnet test --no-build --verbosity normal -p:EnableRtpMidiJournal=true

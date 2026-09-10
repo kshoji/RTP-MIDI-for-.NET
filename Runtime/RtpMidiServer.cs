@@ -290,6 +290,9 @@ namespace jp.kshoji.rtpmidi
 
             if (session.BeginTransmission(participant))
             {
+#if ENABLE_RTP_MIDI_JOURNAL
+                participant.journal.Record(data);
+#endif
                 foreach (var datum in data)
                 {
                     session.Write(participant, datum);

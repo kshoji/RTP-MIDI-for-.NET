@@ -332,6 +332,9 @@ namespace jp.kshoji.rtpmidi
                         }
 
                         session.ManageReceiverFeedback();
+#if ENABLE_RTP_MIDI_JOURNAL
+                        session.ManageTrailingLoss();
+#endif
                         session.ManageSynchronization();
 
                         // wait for next data

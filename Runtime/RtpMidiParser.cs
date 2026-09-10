@@ -114,23 +114,40 @@ namespace jp.kshoji.rtpmidi
             // Always a MIDI section
             if (midiCommandLength > 0)
             {
-                var retVal = DecodeMidiSection(participant, bufferData);
-                switch (retVal)
+#if ENABLE_RTP_MIDI_JOURNAL
+                if (!participant.playMidiCommands)
                 {
-                    case ParserResult.Processed:
-                        break;
-                    case ParserResult.UnexpectedMidiData:
-                        // already processed MIDI data will be played
-                        rtpHeadersComplete = false;
-                        break;
-                    default:
-                        return retVal;
+                    var skip = SkipMidiSection(bufferData, midiCommandLength);
+                    if (skip != ParserResult.Processed)
+                    {
+                        return skip;
+                    }
+                }
+                else
+#endif
+                {
+                    var retVal = DecodeMidiSection(participant, bufferData);
+                    switch (retVal)
+                    {
+                        case ParserResult.Processed:
+                            break;
+                        case ParserResult.UnexpectedMidiData:
+                            // already processed MIDI data will be played
+                            rtpHeadersComplete = false;
+                            break;
+                        default:
+                            return retVal;
+                    }
                 }
             }
 
             if ((rtpMidiFlags & 0x40) == 0x40)
             {
+#if ENABLE_RTP_MIDI_JOURNAL
+                var retVal = DecodeJournalSection(participant, bufferData, participant.applyRecoveryJournal);
+#else
                 var retVal = DecodeJournalSection(bufferData);
+#endif
                 switch (retVal)
                 {
                     case ParserResult.Processed:
@@ -433,6 +450,49 @@ namespace jp.kshoji.rtpmidi
             return RtpMidiParticipant.MaxBufferSize + 1;
         }
 
+#if ENABLE_RTP_MIDI_JOURNAL
+        private ParserResult SkipMidiSection(LinkedList<byte> bufferData, short length)
+        {
+            if (bufferData.Count < length)
+            {
+                return ParserResult.NotEnoughData;
+            }
+
+            for (var i = 0; i < length; i++)
+            {
+                bufferData.RemoveFirst();
+            }
+
+            midiCommandLength = 0;
+            return ParserResult.Processed;
+        }
+
+        private ParserResult DecodeJournalSection(RtpMidiParticipant participant, LinkedList<byte> bufferData, bool apply)
+        {
+            var buffer = bufferData.ToArray();
+            var result = RtpMidiJournalSection.TryConsume(buffer, 0, out var consumed);
+            switch (result)
+            {
+                case RtpMidiJournalSection.ConsumeResult.NotEnoughData:
+                    return ParserResult.NotEnoughData;
+                case RtpMidiJournalSection.ConsumeResult.Invalid:
+                    rtpHeadersComplete = false;
+                    return ParserResult.UnexpectedJournalData;
+            }
+
+            if (apply)
+            {
+                session.ApplyRecoveryJournal(participant, buffer, consumed);
+            }
+
+            for (var i = 0; i < consumed; i++)
+            {
+                bufferData.RemoveFirst();
+            }
+
+            return ParserResult.Processed;
+        }
+#else
         private ParserResult DecodeJournalSection(LinkedList<byte> bufferData)
         {
             var buffer = bufferData.ToArray();
@@ -453,6 +513,7 @@ namespace jp.kshoji.rtpmidi
 
             return ParserResult.Processed;
         }
+#endif
     }
 
     /// <summary>

@@ -22,6 +22,7 @@ namespace jp.kshoji.rtpmidi
         NoResponseFromConnectionRequestException,
         SendPacketsDropped,
         ReceivedPacketsDropped,
+        RecoveryJournalOverflowException,
     }
 
     /// <summary>
@@ -97,9 +98,11 @@ namespace jp.kshoji.rtpmidi
         internal bool playMidiCommands = true;
         internal bool applyRecoveryJournal;
         internal ushort remoteFeedbackSequenceNr;
+        internal uint remoteFeedbackExtended;
         internal bool hasRemoteFeedback;
         internal long lastRtpMidiSendTime;
         internal bool hasSentRtpMidi;
+        internal uint firstSentSequenceExtended;
 #endif
 
         internal long lastSyncExchangeTime;
@@ -171,6 +174,10 @@ namespace jp.kshoji.rtpmidi
 
 #if ENABLE_RTP_MIDI_JOURNAL
         private const int TrailingLossIntervalMs = 50;
+        /// <summary>
+        /// Disconnect when RS stalls and unacked send sequences exceed this span.
+        /// </summary>
+        private const uint MaxUnackedJournalPackets = 512;
 #endif
 
         // The initiator must initiate a new sync exchange at least once every 60 seconds
@@ -906,7 +913,8 @@ namespace jp.kshoji.rtpmidi
 
 #if ENABLE_RTP_MIDI_JOURNAL
             rtpMidiFlags |= 0x40;
-            var journalData = participant.journal.Encode(packetSequenceI);
+            var checkpointC = SelectSendCheckpoint(participant, packetSequenceI);
+            var journalData = participant.journal.Encode(packetSequenceI, checkpointC);
 #endif
 
             if (bufferLen < 0x0f)
@@ -925,6 +933,14 @@ namespace jp.kshoji.rtpmidi
 
 #if ENABLE_RTP_MIDI_JOURNAL
             dataStream.Write(journalData, 0, journalData.Length);
+            // Journal for I excludes this packet's MIDI; assign pending commands to I after Encode.
+            participant.journal.CommitPending(packetSequenceI);
+            participant.journal.PruneBefore(checkpointC);
+            if (!participant.hasSentRtpMidi)
+            {
+                participant.firstSentSequenceExtended = participant.sendSequenceNrExtended;
+            }
+
             participant.hasSentRtpMidi = true;
             participant.lastRtpMidiSendTime = RtpMidiClock.Ticks();
 #endif
@@ -1056,9 +1072,9 @@ namespace jp.kshoji.rtpmidi
                         }
                     }
 
-                    // Stop once the peer's RS has caught up to our last sent sequence.
+                    // Stop once the peer's RS (extended M(k)) has caught up to our last sent sequence.
                     if (participant.hasRemoteFeedback &&
-                        !RtpSequenceNumber.IsAheadOf(participant.sendSequenceNr, participant.remoteFeedbackSequenceNr))
+                        participant.remoteFeedbackExtended >= participant.sendSequenceNrExtended)
                     {
                         continue;
                     }
@@ -1091,6 +1107,16 @@ namespace jp.kshoji.rtpmidi
                         {
                             continue;
                         }
+
+#if ENABLE_RTP_MIDI_JOURNAL
+                        if (ShouldDisconnectForJournalOverflow(participant))
+                        {
+                            SendEndSession(participant);
+                            participantsToRemove.Add(participant);
+                            exceptionListener?.OnError(RtpMidiExceptionKind.RecoveryJournalOverflowException);
+                            continue;
+                        }
+#endif
 
                         if (participant.kind == ParticipantKind.Listener)
                         {
@@ -1325,7 +1351,13 @@ namespace jp.kshoji.rtpmidi
             }
 
 #if ENABLE_RTP_MIDI_JOURNAL
-            participant.remoteFeedbackSequenceNr = receiverFeedback.SequenceNr;
+            var previous = participant.hasRemoteFeedback
+                ? participant.remoteFeedbackExtended
+                : participant.sendSequenceNrExtended;
+            participant.remoteFeedbackExtended = RtpMidiCheckpointPolicy.ExtendReceiverFeedback(
+                previous,
+                receiverFeedback.SequenceNr);
+            participant.remoteFeedbackSequenceNr = RtpSequenceNumber.Low16(participant.remoteFeedbackExtended);
             participant.hasRemoteFeedback = true;
 #endif
 
@@ -1494,6 +1526,35 @@ namespace jp.kshoji.rtpmidi
         }
 
 #if ENABLE_RTP_MIDI_JOURNAL
+        private static ushort SelectSendCheckpoint(RtpMidiParticipant participant, ushort packetSequenceI)
+        {
+            var hasSessionStart = participant.journal.TryGetSessionStartSequence(out var sessionStart);
+            return RtpMidiCheckpointPolicy.SelectCheckpoint(
+                packetSequenceI,
+                participant.hasRemoteFeedback,
+                participant.remoteFeedbackExtended,
+                hasSessionStart,
+                sessionStart,
+                participant.journal);
+        }
+
+        private static bool ShouldDisconnectForJournalOverflow(RtpMidiParticipant participant)
+        {
+            if (!participant.hasSentRtpMidi)
+            {
+                return false;
+            }
+
+            var span = RtpMidiCheckpointPolicy.UnackedPacketSpan(
+                participant.sendSequenceNrExtended,
+                participant.hasRemoteFeedback,
+                participant.remoteFeedbackExtended,
+                true,
+                participant.firstSentSequenceExtended);
+
+            return span > MaxUnackedJournalPackets;
+        }
+
         /// <summary>
         /// Applies a recovery journal when receive policy requires it. Chapter bodies are Phase 3+.
         /// </summary>

@@ -1556,7 +1556,7 @@ namespace jp.kshoji.rtpmidi
         }
 
         /// <summary>
-        /// Applies a recovery journal when receive policy requires it. Chapter bodies are Phase 3+.
+        /// Applies Chapter N / E when receive policy requires it.
         /// </summary>
         internal void ApplyRecoveryJournal(RtpMidiParticipant participant, byte[] journal, int length)
         {
@@ -1575,7 +1575,37 @@ namespace jp.kshoji.rtpmidi
                 }
             }
 
-            // Chapter application is implemented in later phases.
+            if (!RtpMidiNoteJournal.TryDecode(journal, length, out var recovered))
+            {
+                return;
+            }
+
+            for (var i = 0; i < recovered.Count; i++)
+            {
+                EmitRecovered(participant, recovered[i]);
+            }
+        }
+
+        private void EmitRecovered(RtpMidiParticipant participant, RecoveredMidi command)
+        {
+            if (rtpMidiEventHandler == null)
+            {
+                return;
+            }
+
+            var deviceId = GetDeviceId(participant);
+            switch (command.Type)
+            {
+                case MidiType.NoteOff:
+                    rtpMidiEventHandler.OnMidiNoteOff(deviceId, command.Channel, command.Data1, command.Data2);
+                    break;
+                case MidiType.NoteOn:
+                    rtpMidiEventHandler.OnMidiNoteOn(deviceId, command.Channel, command.Data1, command.Data2);
+                    break;
+                case MidiType.ControlChange:
+                    rtpMidiEventHandler.OnMidiControlChange(deviceId, command.Channel, command.Data1, command.Data2);
+                    break;
+            }
         }
 
         private void ClearIndefiniteArtifacts(RtpMidiParticipant participant)

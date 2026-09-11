@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace jp.kshoji.rtpmidi
 {
     /// <summary>
-    /// Session-lifetime controller counts for Chapter C toggle and count tools.
+    /// Session-lifetime controller counts and snapshots for Chapter C / M / P.
     /// Encode must not mutate this state; CommitPending updates it.
     /// </summary>
     public sealed class RtpMidiControlState
@@ -13,15 +13,42 @@ namespace jp.kshoji.rtpmidi
         private readonly int[,] commandCount = new int[16, 128];
         private readonly bool[,] switchOn = new bool[16, 128];
         private readonly ChannelParam[] channel = new ChannelParam[16];
+        private readonly BankState[] runningBank = new BankState[16];
+        private readonly BankState[] programBank = new BankState[16];
 
         public int ToggleCount(int channel, int controller) => toggleCount[channel, controller];
 
         public int CommandCount(int channel, int controller) => commandCount[channel, controller];
 
         /// <summary>
+        /// Bank captured at the most recent Program Change. Survives prune of the Bank Select packets.
+        /// </summary>
+        public bool TryGetProgramBank(int channelIndex, out BankState bank)
+        {
+            bank = programBank[channelIndex];
+            return bank.HasMsb;
+        }
+
+        /// <summary>
+        /// Session-lifetime RPN/NRPN transaction flags. Survives prune of the number-select packets.
+        /// </summary>
+        public ParameterSession GetParameterSession(int channelIndex)
+        {
+            var param = channel[channelIndex];
+            return new ParameterSession
+            {
+                Pending = param.MsbSeen && !param.LsbSeen && !param.Closed && !param.HasNumber,
+                InProgress = param.HasNumber && !param.Closed && !param.NullComplete,
+                IsNrpn = param.IsNrpn,
+                Msb = param.Msb,
+                Lsb = param.Lsb,
+            };
+        }
+
+        /// <summary>
         /// Observes a committed MIDI command and returns how Chapter C / M should treat it.
         /// </summary>
-        public RtpMidiControlJournal.ControlMeta Observe(byte[] midi)
+        public RtpMidiControlJournal.ControlMeta Observe(byte[] midi, ushort packetSequence = 0)
         {
             if (midi == null || midi.Length == 0)
             {
@@ -31,6 +58,12 @@ namespace jp.kshoji.rtpmidi
             if (RtpMidiControlJournal.IsResetState(midi))
             {
                 ResetAll();
+                return default;
+            }
+
+            if (midi.Length >= 2 && (midi[0] & 0xf0) == 0xc0)
+            {
+                programBank[midi[0] & 0x0f] = runningBank[midi[0] & 0x0f];
                 return default;
             }
 
@@ -50,8 +83,33 @@ namespace jp.kshoji.rtpmidi
                 Value = value,
             };
 
+            if (number == 0)
+            {
+                runningBank[ch] = new BankState
+                {
+                    HasMsb = true,
+                    Msb = value,
+                    MsbSequence = packetSequence,
+                };
+            }
+            else if (number == 32 && runningBank[ch].HasMsb)
+            {
+                var bank = runningBank[ch];
+                bank.HasLsb = true;
+                bank.Lsb = value;
+                bank.LsbSequence = packetSequence;
+                runningBank[ch] = bank;
+            }
+
             if (number == 121)
             {
+                if (runningBank[ch].HasMsb)
+                {
+                    var bank = runningBank[ch];
+                    bank.Cc121SinceMsb = true;
+                    runningBank[ch] = bank;
+                }
+
                 ApplyResetAllControllers(ch);
                 commandCount[ch, number] = (commandCount[ch, number] + 1) & 63;
                 meta.Kind = RtpMidiControlJournal.LogKind.Count;
@@ -187,6 +245,8 @@ namespace jp.kshoji.rtpmidi
             for (var i = 0; i < 16; i++)
             {
                 channel[i] = default;
+                runningBank[i] = default;
+                programBank[i] = default;
             }
         }
 
@@ -202,6 +262,26 @@ namespace jp.kshoji.rtpmidi
         }
 
         private static int ParameterKey(bool isNrpn, byte msb, byte lsb) => (isNrpn ? 1 << 16 : 0) | (msb << 8) | lsb;
+
+        public struct BankState
+        {
+            public bool HasMsb;
+            public byte Msb;
+            public ushort MsbSequence;
+            public bool HasLsb;
+            public byte Lsb;
+            public ushort LsbSequence;
+            public bool Cc121SinceMsb;
+        }
+
+        public struct ParameterSession
+        {
+            public bool Pending;
+            public bool InProgress;
+            public bool IsNrpn;
+            public byte Msb;
+            public byte Lsb;
+        }
 
         private struct ChannelParam
         {
@@ -672,6 +752,21 @@ namespace jp.kshoji.rtpmidi
                 }
 
                 logs[key] = log;
+            }
+
+            if (state != null)
+            {
+                var session = state.GetParameterSession(channel);
+                if (session.InProgress && logs.Count > 0)
+                {
+                    eBit = true;
+                    var key = ((session.IsNrpn ? 1 : 0) << 16) | (session.Msb << 8) | session.Lsb;
+                    if (logs.TryGetValue(key, out var active))
+                    {
+                        active.InitiatedInCheckpoint = true;
+                        logs[key] = active;
+                    }
+                }
             }
 
             var includeHeader = false;

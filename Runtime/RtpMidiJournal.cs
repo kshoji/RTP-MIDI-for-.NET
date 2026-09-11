@@ -111,7 +111,7 @@ namespace jp.kshoji.rtpmidi
 
             foreach (var midi in pending)
             {
-                var meta = controlState.Observe(midi);
+                var meta = controlState.Observe(midi, packetSequence);
                 var sysExCountAfter = systemState.Observe(midi);
                 committed.Add(new Entry
                 {

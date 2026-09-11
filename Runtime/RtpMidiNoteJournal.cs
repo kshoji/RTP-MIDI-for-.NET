@@ -421,6 +421,7 @@ namespace jp.kshoji.rtpmidi
 
                 RtpMidiVoiceJournal.EncodeChannel(
                     history,
+                    controlState,
                     channel,
                     packetSequenceI,
                     checkpointC,

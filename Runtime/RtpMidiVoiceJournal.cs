@@ -21,6 +21,7 @@ namespace jp.kshoji.rtpmidi
     {
         public static void EncodeChannel(
             IReadOnlyList<RtpMidiNoteJournal.HistoryItem> history,
+            RtpMidiControlState controlState,
             int channel,
             ushort packetSequenceI,
             ushort checkpointC,
@@ -42,7 +43,7 @@ namespace jp.kshoji.rtpmidi
                 return;
             }
 
-            var scan = Scan(history, channel, checkpointC, packetSequenceI);
+            var scan = Scan(history, controlState, channel, checkpointC, packetSequenceI);
             var previous = (ushort)(packetSequenceI - 1);
             var tail = new List<byte>();
             if (scan.Program.Present)
@@ -213,12 +214,26 @@ namespace jp.kshoji.rtpmidi
 
         private static ScanState Scan(
             IReadOnlyList<RtpMidiNoteJournal.HistoryItem> history,
+            RtpMidiControlState controlState,
             int channel,
             ushort checkpointC,
             ushort packetSequenceI)
         {
             var scan = NewScan();
             var running = new RunningBank();
+            if (controlState != null && controlState.TryGetProgramBank(channel, out var bank))
+            {
+                running.HasMsb = bank.HasMsb;
+                running.Msb = bank.Msb;
+                running.MsbSequence = bank.MsbSequence;
+                running.MsbHistoryIndex = -1;
+                running.HasLsb = bank.HasLsb;
+                running.Lsb = bank.Lsb;
+                running.LsbSequence = bank.LsbSequence;
+                running.LsbHistoryIndex = -1;
+                running.Cc121SinceMsb = bank.Cc121SinceMsb;
+            }
+
             var poly = new TimedCommand[128];
             var notesOffOrder = -1;
             for (var i = 0; i < history.Count; i++)

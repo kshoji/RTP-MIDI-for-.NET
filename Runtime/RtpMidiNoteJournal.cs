@@ -4,17 +4,39 @@ using System.Collections.Generic;
 namespace jp.kshoji.rtpmidi
 {
     /// <summary>
-    /// MIDI command recovered from Chapter N / E and executed on the local renderer.
+    /// Chapter C tool carried on a recovered Control Change so the receiver can apply a delta.
+    /// </summary>
+    public enum RecoveredControlTool
+    {
+        None,
+        Value,
+        Toggle,
+        Count,
+    }
+
+    /// <summary>
+    /// MIDI command recovered from a recovery journal chapter.
     /// </summary>
     public readonly struct RecoveredMidi
     {
-        public RecoveredMidi(MidiType type, int channel, int data1, int data2, byte[] payload = null)
+        public RecoveredMidi(
+            MidiType type,
+            int channel,
+            int data1,
+            int data2,
+            byte[] payload = null,
+            RecoveredControlTool controlTool = RecoveredControlTool.None,
+            int controlAlt = 0,
+            int noteRefCount = -1)
         {
             Type = type;
             Channel = channel;
             Data1 = data1;
             Data2 = data2;
             Payload = payload;
+            ControlTool = controlTool;
+            ControlAlt = controlAlt;
+            NoteRefCount = noteRefCount;
         }
 
         public MidiType Type { get; }
@@ -22,6 +44,9 @@ namespace jp.kshoji.rtpmidi
         public int Data1 { get; }
         public int Data2 { get; }
         public byte[] Payload { get; }
+        public RecoveredControlTool ControlTool { get; }
+        public int ControlAlt { get; }
+        public int NoteRefCount { get; }
     }
 
     /// <summary>
@@ -680,6 +705,7 @@ namespace jp.kshoji.rtpmidi
             for (var i = 0; i < 128; i++)
             {
                 releaseVelocity[i] = 64;
+                stackedCount[i] = -1;
             }
 
             if ((toc & TocN) == TocN)
@@ -723,7 +749,12 @@ namespace jp.kshoji.rtpmidi
             for (var i = 0; i < offs.Count; i++)
             {
                 var note = offs[i];
-                commands.Add(new RecoveredMidi(MidiType.NoteOff, channel, note, releaseVelocity[note]));
+                commands.Add(new RecoveredMidi(
+                    MidiType.NoteOff,
+                    channel,
+                    note,
+                    releaseVelocity[note],
+                    noteRefCount: stackedCount[note]));
             }
 
             for (var i = 0; i < ons.Count; i++)
@@ -731,7 +762,12 @@ namespace jp.kshoji.rtpmidi
                 var on = ons[i];
                 if (on.Play)
                 {
-                    commands.Add(new RecoveredMidi(MidiType.NoteOn, channel, on.Note, on.Velocity));
+                    commands.Add(new RecoveredMidi(
+                        MidiType.NoteOn,
+                        channel,
+                        on.Note,
+                        on.Velocity,
+                        noteRefCount: stackedCount[on.Note]));
                 }
             }
 

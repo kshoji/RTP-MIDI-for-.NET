@@ -310,20 +310,27 @@ namespace jp.kshoji.rtpmidi
                 var altTool = (second & 0x80) != 0;
                 cursor += 2;
                 int value;
+                var tool = RecoveredControlTool.Value;
+                var alt = 0;
                 if (!altTool)
                 {
                     value = second & 0x7f;
                 }
                 else if ((second & 0x40) == 0)
                 {
-                    value = (second & 0x3f) % 2 == 1 ? 127 : 0;
+                    alt = second & 0x3f;
+                    value = alt % 2 == 1 ? 127 : 0;
+                    tool = RecoveredControlTool.Toggle;
                 }
                 else
                 {
+                    alt = second & 0x3f;
                     value = 0;
+                    tool = RecoveredControlTool.Count;
                 }
 
-                commands.Add(new RecoveredMidi(MidiType.ControlChange, channel, number, value));
+                commands.Add(new RecoveredMidi(
+                    MidiType.ControlChange, channel, number, value, controlTool: tool, controlAlt: alt));
             }
 
             return true;

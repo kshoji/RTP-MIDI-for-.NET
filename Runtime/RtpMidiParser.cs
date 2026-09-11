@@ -111,7 +111,8 @@ namespace jp.kshoji.rtpmidi
                 rtpHeadersComplete = true;
             }
 
-            // Always a MIDI section
+            // Always a MIDI section. Consume it first so the journal (which follows on the wire)
+            // can be applied before the MIDI command section is played.
             if (midiCommandLength > 0)
             {
 #if ENABLE_RTP_MIDI_JOURNAL
@@ -122,6 +123,50 @@ namespace jp.kshoji.rtpmidi
                     {
                         return skip;
                     }
+                }
+                else if ((rtpMidiFlags & 0x40) == 0x40)
+                {
+                    if (bufferData.Count < midiCommandLength)
+                    {
+                        return ParserResult.NotEnoughData;
+                    }
+
+                    var midiSection = new LinkedList<byte>();
+                    var midiLength = midiCommandLength;
+                    for (var i = 0; i < midiLength; i++)
+                    {
+                        midiSection.AddLast(bufferData.First.Value);
+                        bufferData.RemoveFirst();
+                    }
+
+                    midiCommandLength = 0;
+                    var journalResult = DecodeJournalSection(participant, bufferData, participant.applyRecoveryJournal);
+                    switch (journalResult)
+                    {
+                        case ParserResult.Processed:
+                            break;
+                        case ParserResult.UnexpectedJournalData:
+                            rtpHeadersComplete = false;
+                            break;
+                        default:
+                            return journalResult;
+                    }
+
+                    midiCommandLength = midiLength;
+                    var midiResult = DecodeMidiSection(participant, midiSection);
+                    switch (midiResult)
+                    {
+                        case ParserResult.Processed:
+                            break;
+                        case ParserResult.UnexpectedMidiData:
+                            rtpHeadersComplete = false;
+                            break;
+                        default:
+                            return midiResult;
+                    }
+
+                    rtpHeadersComplete = false;
+                    return ParserResult.Processed;
                 }
                 else
 #endif

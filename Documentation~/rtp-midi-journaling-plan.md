@@ -105,7 +105,7 @@ AppleMIDI `RS` は 16 bit シーケンス（実装は上位 16 bit、下位は 0
 
 ロスを終わらせるパケットが無ければ受信側は修復できない。無音が続き、かつ checkpoint history にまだ N-active ノートや未 ACK の状態があるあいだは、**MIDI 節 LEN=0 の journal 付きパケット**をデータポートへ出す。既存のセッションスレッドに載せる。`RS` が追いつくか、切断したら止める。
 
-切断時は受信側ローカルで All Notes Off / All Sound Off / Reset All Controllers をイベントハンドラへ出す。可能なら切断前に相手へも送る。
+切断時は受信側ローカルで All Notes Off / All Sound Off / Reset All Controllers をイベントハンドラへ出す。可能なら切断前に相手へも送る（Phase 11）。
 
 ---
 
@@ -182,13 +182,15 @@ AppleMIDI `RS` は 16 bit シーケンス（実装は上位 16 bit、下位は 0
 - チャネル順・LENGTH のヘッダ込み・OFFBITS のビット順が RFC と不一致のまま
 - Chapter M/E/F/X が `NotImplementedException` または読み飛ばしだけ → 送信包含規則を実装する（受信の LENGTH スキップは残しつつ中身も適用する）
 
-`MaxBufferSize`（64）は MIDI 節用のままにし、journal は別見積もりとする。UDP は経路 MTU を超えない（SHOULD、Ethernet ならおおよそ 1500 未満）。溢れるときは MIDI 節を先に出し、続くパケットに journal を載せる。journal 自体が MTU を超えるまで history が伸びたら、その相手を切断する。
+`MaxBufferSize`（64）は MIDI 節用のままにし、journal は別見積もりとする。UDP は経路 MTU を超えない（SHOULD、Ethernet ならおおよそ 1500 未満）。溢れるときは MIDI 節を先に出し、続くパケットに journal を載せる。journal 自体が MTU を超えるまで history が伸びたら、その相手を切断する。オクテット長のガードは Phase 10。未 ACK パケット数の切断は Phase 2。
 
 ---
 
 ## 7. 段階
 
 各段階の完了後、その範囲で RFC の MUST に対して退行しない。後半のチャプタが未配線のあいだ、**対応 MIDI を送ると包含違反になる**。そのため段階のあいだは、未実装チャプタに対応する `SendMidi*` をジャーナリング・オン時に拒否するか、フラグをオフのまま開発する。**公開でフラグをオンにするのは全段階完了後**。
+
+Phase 0–6 は送信包含・受信骨格・単体テストまで実装済み。以下の突き合わせ残件（受信差分、prune 後の session history、分割 SysEx、MTU、退場時の相手修復）を Phase 7–11 とし、旧「公開」は Phase 12 へ送る。
 
 ### Phase 0 — 基盤
 
@@ -238,7 +240,7 @@ AppleMIDI `RS` は 16 bit シーケンス（実装は上位 16 bit、下位は 0
 - E: NoteOff vel≠64、重ね NoteOn の参照カウント
 - 受信適用は Phase 1 の条件のときだけ
 
-完了条件: 欠番で NoteOff が落ちても次パケットで音が止まる。vel≠64 の NoteOff が E で戻る。同一ノートがログと OFFBITS の両方に出ない。OFFBITS ビット順が RFC と一致する。
+完了条件: 欠番で NoteOff が落ちても次パケットで音が止まる。vel≠64 の NoteOff が E で戻る。同一ノートがログと OFFBITS の両方に出ない。OFFBITS ビット順が RFC と一致する。重ね NoteOn の参照カウントを受信で使うのは Phase 7。
 
 ### Phase 4 — Chapter C と M
 
@@ -249,7 +251,7 @@ AppleMIDI `RS` は 16 bit シーケンス（実装は上位 16 bit、下位は 0
 - M: 進行中トランザクション、PENDING、null パラメータ、包含 MUST
 - Reset State / CC121 で C-active を更新
 
-完了条件: Volume 欠落が戻る。CC64 の on→off→on で off 欠落を toggle で検出できる。RPN 操作が C に漏れない。
+完了条件: Volume 欠落が戻る。CC64 の on→off→on で **送信 journal の toggle ALT が欠落を表す**。RPN 操作が C に漏れない。受信側が ALT とローカル回数の差から off を実行するのは Phase 7。
 
 ### Phase 5 — Chapter P / W / T / A
 
@@ -257,7 +259,7 @@ AppleMIDI `RS` は 16 bit シーケンス（実装は上位 16 bit、下位は 0
 
 Bank を P に載せたコマンドは C から省略してよい（MAY）。省略するならテストで固定する。
 
-完了条件: 各メッセージが checkpoint history にあるとき必ず章が出る。無いとき章が出ない。CC121 後に古い Pitch Bend / Aftertouch で修復しない。
+完了条件: 各メッセージが checkpoint history にあるとき必ず章が出る。無いとき章が出ない。CC121 後に古い Pitch Bend / Aftertouch で修復しない。Bank が checkpoint より前でも P に残ることは、履歴を prune しない単体では確認済み。`PruneBefore` 後も session history 相当が残るのは Phase 8。
 
 ### Phase 6 — システム D / V / Q / F / X
 
@@ -265,9 +267,65 @@ API が送るシステム／SysEx／MTC の包含 MUST。Reset State SysEx は a
 
 分割 SysEx は既存の MIDI 節セグメントと X の unfinished 定義を一致させる。F は F1 または Full Frame があるときだけ。
 
-完了条件: Reset / Clock+Start / Active Sense / Quarter Frame / 通常 SysEx について、包含規則と欠番適用のテストがある。F の MUST NOT もテストする。
+完了条件: Reset / Clock+Start / Active Sense / Quarter Frame / 通常 SysEx について、包含規則と欠番適用のテストがある。F の MUST NOT もテストする。`Record` したセグメント列での unfinished/finished は確認済み。`Write` が MIDI 節を分割する経路との一致は Phase 9。
 
-### Phase 7 — 公開
+### Phase 7 — 受信差分修復
+
+RFC §4: 修復はロス末尾の journal と、受信側が既に知っている履歴の差から MIDI を実行する。送信包含は Phase 3–6 で足りる。受信は最新値の再実行ではなく差分にする。
+
+1. 受信側にチャネルごとのトグル回数・ノート参照カウント・必要なら最新 CC 値を持つ。Encode 用の送信 `controlState` / `noteRefCount` とは別物
+2. journal 適用時はローカル回数／状態との差だけハンドラへ出す。初回パケット（ローカル空）では journal の示す状態へ揃える
+3. Chapter C toggle（少なくとも CC64）: on→off→on で off が欠けたら、最終値が ON でも欠落した Off を実行してから On に戻す
+4. Chapter C count（120 / 121 / 123–127）: 回数差があればその回数分（または 1 回の All Notes Off 系で同等）を実行する
+5. Chapter E の V=0 参照カウント: デコードした `stackedCount` を捨てず、残響数に合わせて NoteOn を足す
+6. value tool の CC、P / W / T / A、システム章は「差が最新値のセットと同等」なら最新値 1 回でよい。二重実行だけは禁止
+
+完了条件: CC64 の on→off→on で off パケットを間引くと、受信レンダラが一度 Off（ダンパー解除）してから On に戻るテストがある。重ね NoteOn のカウントが受信で使われる。欠番なしでは従来どおり journal を適用しない。
+
+### Phase 8 — prune 後の session history
+
+チャプタの MUST は checkpoint 内のコマンドだけでなく、**session history** 上の Bank・C-active・進行中トランザクションにも依存する。`PruneBefore(C)` が committed を切っても、Encode に必要な session 相当は残す。
+
+1. Chapter P: Bank MSB/LSB と、Bank と Program のあいだの CC121（X ビット）は、Bank パケットが C より前でも PROGRAM が [C, I) にあるあいだ保持する
+2. Chapter M: E / PENDING / 開始済みトランザクションは session 上の最新 C-active パラメータ状態。checkpoint に Data Entry だけ残っても E=1 を落とさない
+3. 実装はフルコマンド列を残さなくてよい。既存の `RtpMidiControlState` を session スナップショットとして拡張し、Encode は committed（checkpoint）とスナップショットを併用する
+4. 送信側のトグル／カウント／Reset 回数はすでに session 寿命。Bank / パラメータ状態も同じ寿命にする
+
+完了条件: `RS` で C が Bank Select より前に進み、Program だけが [C, I) にあるとき、Chapter P が B=1 のまま Bank を載せる。そのケースを prune 込みでテストする。
+
+### Phase 9 — 分割 SysEx と Chapter X
+
+checkpoint history は MIDI Command Section の連結である。`SendMidiRaw` が SysEx 全体を 1 回 `Record` し、`Write` が `MaxBufferSize` で F0/F7 分割すると、ワイヤ上の unfinished と X がずれる。
+
+1. journal に載せる単位を、実際にその RTP パケットの MIDI 節へ書いたセグメントにする
+2. 分割の First / Middle / Last / Cancel / dropped F7 を、既存の MIDI 節エンコードと同じ規則で `Record` する
+3. 1 パケットに収まる SysEx はこれまでどおり finished 1 ログ
+4. 受信の X 適用は finished をレンダラへ。unfinished はセッション内の組み立て状態に載せ、後続セグメントまたは後続 journal で完了／キャンセルする
+
+完了条件: `MaxBufferSize` を超える SysEx を `Write` 経路で送り、先頭パケットの X が unfinished、末尾で finished になるテストがある。分割をまたいだ欠番でも finished SysEx が復元される。
+
+### Phase 10 — MTU と journal 肥大
+
+§6 の UDP 上限を実装する。`MaxBufferSize`（MIDI 節）と `MaxUdpPayloadSize`（1200、経路 MTU の下）を分ける。未 ACK パケット数（Phase 2 の 512）とは別の、**オクテット長**のガード。
+
+1. 送信パケット（RTP ヘッダ + MIDI 節 + journal）が `MaxUdpPayloadSize` を超えない
+2. 溢れるときは MIDI 節を先に出し、journal は続くパケット（trailing を含む）に載せる
+3. journal 単体が上限を超えるまで history が伸びたら、その相手を切断する（既存の `RecoveryJournalOverflowException` に載せる）
+4. 切断時は Phase 1 のローカル不定状態クリアを行う。相手への MIDI は Phase 11
+
+完了条件: journal が 1200 を超える履歴で切断するテストがある。MIDI 節だけ先に出したパケットでも J=1 の空または縮小 journal を付け、包含違反にしない。
+
+### Phase 11 — 退場時に相手へ不定状態を切る
+
+§3.5 の「可能なら切断前に相手へも送る」。RFC の MUST は退場する受信側のローカルレンダラである。こちらは送信側が切るときに相手のハングノートを減らす SHOULD。
+
+1. タイムアウト・journal 肥大・自発 `End` の前に、データポートへ All Sound Off / RAC / All Notes Off を載せる（全チャネル）
+2. そのパケットも J=1。送れなければ待たずに `BY` とローカル Clear へ進む
+3. 相手から `BY` を受けたときは送らない（既に退場している）
+
+完了条件: 自発切断の経路で、`BY` より前に不定状態クリアの MIDI が相手へ出る（または送信失敗でスキップする）テストまたはループバック確認がある。受信側ローカル Clear は Phase 1 のまま退行しない。
+
+### Phase 12 — 公開
 
 - フラグ既定オン、またはオンでリリース
 - README から「journaling 非対応」を削除し、RFC 6295 Recovery Journal（既定セマンティクス、closed-loop、AppleMIDI `RS`）と書く
@@ -296,8 +354,12 @@ Phase 0 の終わりまでにテストプロジェクトを追加する。ネッ
 - 初回パケット適用、欠番なし非適用、順序入れ替わり非適用、被覆失敗時のフォールバック
 - 16 bit ラップと `RS` による C の前進
 - Reset State / CC 120 / 123–127 / 121 で N-active / C-active / active が落ちる
+- 受信差分: CC64 on→off→on の off 欠落で Off が一度実行される。重ね NoteOn の E カウントが受信で使われる
+- prune 後も Program が [C, I) なら Chapter P に Bank が残る
+- `Write` 分割 SysEx の unfinished → finished が X と一致する
+- journal 単体が `MaxUdpPayloadSize` を超えたら切断する
 
-結合: ループバックでパケット間引き。切断中のノートがローカルで止まること。trailing の空パケットで末尾 NoteOff ロスが直ること。
+結合: ループバックでパケット間引き。切断中のノートがローカルで止まること。trailing の空パケットで末尾 NoteOff ロスが直ること。自発切断前に相手へ All Notes Off 系が出ること。
 
 ---
 
@@ -318,9 +380,19 @@ Phase 5  Chapter P / W / T / A
    │
 Phase 6  Chapter D / V / Q / F / X
    │
-Phase 7  公開（フラグオン、README）
+Phase 7  受信差分修復（toggle / count / 重ねノート）
+   │
+Phase 8  prune 後の session history（P の Bank、M の E）
+   │
+Phase 9  分割 SysEx と Chapter X の一致
+   │
+Phase 10 MTU と journal 肥大（1200 オクテット）
+   │
+Phase 11 退場時に相手へ不定状態を切る
+   │
+Phase 12 公開（フラグオン、README）
 ```
 
-Phase 3 より前にフラグを既定オンにしない。未実装チャプタの MIDI をオンのまま送らない。
+Phase 12 より前にフラグを既定オンにしない。未実装チャプタの MIDI をオンのまま送らない。
 
 実装時のビット配置・包含の細部は、本計画より RFC 6295 の該当節（§3–5、Appendix A/B、C.2.2.2）を優先する。矛盾があれば RFC に合わせて本ファイルを直す。

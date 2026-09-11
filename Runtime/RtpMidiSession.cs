@@ -132,6 +132,7 @@ namespace jp.kshoji.rtpmidi
 
 #if ENABLE_RTP_MIDI_JOURNAL
         internal readonly RtpMidiJournal journal;
+        internal readonly RtpMidiReceiveState receiveState;
 #endif
 
         internal RtpMidiParticipant(RtpMidiSession session, IPEndPoint endPoint)
@@ -141,6 +142,7 @@ namespace jp.kshoji.rtpmidi
             DataEndPoint = new IPEndPoint(endPoint.Address, endPoint.Port + 1);
 #if ENABLE_RTP_MIDI_JOURNAL
             journal = new RtpMidiJournal();
+            receiveState = new RtpMidiReceiveState();
 #endif
         }
     }
@@ -1433,6 +1435,9 @@ namespace jp.kshoji.rtpmidi
         /// </summary>
         public void ReceivedMidi(RtpMidiParticipant participant, MidiType midiType, byte[] data)
         {
+#if ENABLE_RTP_MIDI_JOURNAL
+            participant.receiveState.ObserveMidi(midiType, data);
+#endif
             switch (midiType)
             {
                 case MidiType.NoteOff:
@@ -1604,7 +1609,7 @@ namespace jp.kshoji.rtpmidi
         }
 
         /// <summary>
-        /// Applies Chapter N / E when receive policy requires it.
+        /// Applies the recovery journal as a delta against receive-side history (RFC 6295 §4).
         /// </summary>
         internal void ApplyRecoveryJournal(RtpMidiParticipant participant, byte[] journal, int length)
         {
@@ -1628,9 +1633,10 @@ namespace jp.kshoji.rtpmidi
                 return;
             }
 
-            for (var i = 0; i < recovered.Count; i++)
+            var delta = participant.receiveState.Diff(recovered);
+            for (var i = 0; i < delta.Count; i++)
             {
-                EmitRecovered(participant, recovered[i]);
+                EmitRecovered(participant, delta[i]);
             }
         }
 
@@ -1708,6 +1714,7 @@ namespace jp.kshoji.rtpmidi
         private void ClearIndefiniteArtifacts(RtpMidiParticipant participant)
         {
             RtpMidiIndefiniteState.Clear(rtpMidiEventHandler, GetDeviceId(participant));
+            participant.receiveState.ObserveIndefiniteClear();
         }
 #endif
 

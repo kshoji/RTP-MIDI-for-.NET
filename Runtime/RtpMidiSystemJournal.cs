@@ -794,24 +794,26 @@ namespace jp.kshoji.rtpmidi
             }
 
             var flags = journal[cursor++];
-            if ((flags & 0x40) == 0x40 && !ReadCount(journal, ref cursor, end, out _))
-            {
-                return false;
-            }
-
             if ((flags & 0x40) == 0x40)
             {
-                commands.Add(new RecoveredMidi(MidiType.SystemReset, 0, 0, 0));
-            }
-
-            if ((flags & 0x20) == 0x20)
-            {
-                if (!ReadCount(journal, ref cursor, end, out _))
+                if (!ReadCount(journal, ref cursor, end, out var count))
                 {
                     return false;
                 }
 
-                commands.Add(new RecoveredMidi(MidiType.TuneRequest, 0, 0, 0));
+                commands.Add(new RecoveredMidi(
+                    MidiType.SystemReset, 0, 0, 0, controlTool: RecoveredControlTool.Count, controlAlt: count));
+            }
+
+            if ((flags & 0x20) == 0x20)
+            {
+                if (!ReadCount(journal, ref cursor, end, out var count))
+                {
+                    return false;
+                }
+
+                commands.Add(new RecoveredMidi(
+                    MidiType.TuneRequest, 0, 0, 0, controlTool: RecoveredControlTool.Count, controlAlt: count));
             }
 
             if ((flags & 0x10) == 0x10)
@@ -855,8 +857,10 @@ namespace jp.kshoji.rtpmidi
                 return false;
             }
 
+            var count = journal[cursor] & 0x7f;
             cursor++;
-            commands.Add(new RecoveredMidi(MidiType.ActiveSensing, 0, 0, 0));
+            commands.Add(new RecoveredMidi(
+                MidiType.ActiveSensing, 0, 0, 0, controlTool: RecoveredControlTool.Count, controlAlt: count));
             return true;
         }
 

@@ -30,6 +30,9 @@ namespace jp.kshoji.rtpmidi
         private int activeSenseCount;
         private int songSelect = -1;
         private MidiType lastTransport;
+        private readonly List<byte> openSysEx = new List<byte>();
+        private bool hasOpenSysEx;
+        private byte[] lastFinishedSysEx;
 
         /// <summary>
         /// Turns journal commands into the renderer delta against this state, then observes the emitted commands.
@@ -97,6 +100,7 @@ namespace jp.kshoji.rtpmidi
         /// </summary>
         public void ObserveIndefiniteClear()
         {
+            CancelOpenSysEx();
             for (var channel = 0; channel < 16; channel++)
             {
                 ObserveRecovered(new RecoveredMidi(
@@ -181,6 +185,9 @@ namespace jp.kshoji.rtpmidi
                     }
 
                     Emit(emitted, command);
+                    return;
+                case MidiType.SystemExclusive:
+                    AppendSysEx(emitted, command);
                     return;
                 default:
                     Emit(emitted, command);
@@ -385,6 +392,14 @@ namespace jp.kshoji.rtpmidi
                 case MidiType.Stop:
                     lastTransport = command.Type;
                     return;
+                case MidiType.SystemExclusive:
+                    if (command.Payload != null)
+                    {
+                        lastFinishedSysEx = command.Payload;
+                    }
+
+                    CancelOpenSysEx();
+                    return;
             }
         }
 
@@ -480,6 +495,126 @@ namespace jp.kshoji.rtpmidi
             activeSenseCount = 0;
             songSelect = -1;
             lastTransport = 0;
+            CancelOpenSysEx();
+            lastFinishedSysEx = null;
+        }
+
+        /// <summary>
+        /// Consumes a MIDI-section SysEx segment. Returns true and the finished payload when the renderer should play it.
+        /// </summary>
+        public bool PushSysEx(byte[] midi, out byte[] finished)
+        {
+            finished = null;
+            if (!RtpMidiCommandSection.TryClassifySysEx(midi, out var kind, out var data))
+            {
+                return false;
+            }
+
+            switch (kind)
+            {
+                case RtpMidiCommandSection.SysExKind.Complete:
+                case RtpMidiCommandSection.SysExKind.DroppedF7:
+                    CancelOpenSysEx();
+                    finished = RtpMidiCommandSection.WrapFinished(data);
+                    lastFinishedSysEx = finished;
+                    return true;
+                case RtpMidiCommandSection.SysExKind.First:
+                    openSysEx.Clear();
+                    openSysEx.AddRange(data);
+                    hasOpenSysEx = true;
+                    return false;
+                case RtpMidiCommandSection.SysExKind.Middle:
+                    if (hasOpenSysEx)
+                    {
+                        openSysEx.AddRange(data);
+                    }
+
+                    return false;
+                case RtpMidiCommandSection.SysExKind.Last:
+                    if (!hasOpenSysEx)
+                    {
+                        return false;
+                    }
+
+                    openSysEx.AddRange(data);
+                    finished = RtpMidiCommandSection.WrapFinished(openSysEx.ToArray());
+                    CancelOpenSysEx();
+                    lastFinishedSysEx = finished;
+                    return true;
+                case RtpMidiCommandSection.SysExKind.Cancel:
+                    CancelOpenSysEx();
+                    return false;
+                default:
+                    return false;
+            }
+        }
+
+        private void AppendSysEx(List<RecoveredMidi> emitted, RecoveredMidi command)
+        {
+            if (command.SysExStatus == 0)
+            {
+                openSysEx.Clear();
+                if (command.Payload != null)
+                {
+                    openSysEx.AddRange(command.Payload);
+                }
+
+                hasOpenSysEx = true;
+                return;
+            }
+
+            if (command.SysExStatus == 1)
+            {
+                CancelOpenSysEx();
+                return;
+            }
+
+            var payload = command.Payload;
+            if (payload == null)
+            {
+                return;
+            }
+
+            if (command.SysExStatus == 2 || command.SysExStatus == 3)
+            {
+                if (payload.Length < 2 || payload[0] != 0xf0)
+                {
+                    payload = RtpMidiCommandSection.WrapFinished(payload);
+                }
+            }
+
+            if (SameSysEx(lastFinishedSysEx, payload))
+            {
+                CancelOpenSysEx();
+                return;
+            }
+
+            CancelOpenSysEx();
+            Emit(emitted, new RecoveredMidi(MidiType.SystemExclusive, 0, 0, 0, payload, sysExStatus: 3));
+        }
+
+        private void CancelOpenSysEx()
+        {
+            openSysEx.Clear();
+            hasOpenSysEx = false;
+        }
+
+        private static bool SameSysEx(byte[] a, byte[] b)
+        {
+            if (a == null || b == null || a.Length != b.Length)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < a.Length; i++)
+            {
+                if (a[i] != b[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }

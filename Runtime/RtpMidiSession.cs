@@ -709,29 +709,21 @@ namespace jp.kshoji.rtpmidi
         {
             lock (participant.outMidiBuffer)
             {
-                // do we still have place in the buffer for 1 more character?
-                if ((participant.outMidiBuffer.Count) + 2 > RtpMidiParticipant.MaxBufferSize)
+                if (!RtpMidiCommandSection.TryAppend(
+                        participant.outMidiBuffer,
+                        datum,
+                        RtpMidiParticipant.MaxBufferSize,
+                        out var flushed))
                 {
-                    // buffer is almost full, only 1 more character
-                    if ((byte)MidiType.SystemExclusive == participant.outMidiBuffer.First?.Value)
-                    {
-                        // Add Sysex at the end of this partial SysEx (in the last available slot) ...
-                        participant.outMidiBuffer.AddLast((byte)MidiType.SystemExclusiveStart);
-
-                        WriteRtpMidi(participant);
-                        // and start again with a fresh continuation of
-                        // a next SysEx block.
-                        participant.outMidiBuffer.Clear();
-                        participant.outMidiBuffer.AddLast((byte)MidiType.SystemExclusiveEnd);
-                    }
-                    else
-                    {
-                        exceptionListener?.OnError(RtpMidiExceptionKind.BufferFullException);
-                    }
+                    exceptionListener?.OnError(RtpMidiExceptionKind.BufferFullException);
+                    participant.outMidiBuffer.AddLast(datum);
+                    return;
                 }
 
-                // store in local buffer, as we do *not* know the length of the message prior to sending
-                participant.outMidiBuffer.AddLast(datum);
+                if (flushed != null)
+                {
+                    WriteRtpMidiPacket(participant, flushed);
+                }
             }
         }
 
@@ -861,12 +853,21 @@ namespace jp.kshoji.rtpmidi
         {
             lock (participant.outMidiBuffer)
             {
-                WriteRtpMidiBuffer(participant);
+                var midiSection = new byte[participant.outMidiBuffer.Count];
+                participant.outMidiBuffer.CopyTo(midiSection, 0);
+                WriteRtpMidiPacket(participant, midiSection);
                 participant.outMidiBuffer.Clear();
             }
         }
 
         private void WriteRtpMidiBuffer(RtpMidiParticipant participant)
+        {
+            var midiSection = new byte[participant.outMidiBuffer.Count];
+            participant.outMidiBuffer.CopyTo(midiSection, 0);
+            WriteRtpMidiPacket(participant, midiSection);
+        }
+
+        private void WriteRtpMidiPacket(RtpMidiParticipant participant, byte[] midiSection)
         {
             var dataStream = new MemoryStream();
 
@@ -904,7 +905,8 @@ namespace jp.kshoji.rtpmidi
             }, 0, 12);
 
             // Write rtpMIDI section. Journal is not counted in MaxBufferSize.
-            var bufferLen = participant.outMidiBuffer.Count;
+            midiSection = midiSection ?? System.Array.Empty<byte>();
+            var bufferLen = midiSection.Length;
             byte rtpMidiFlags = 0;
             if (bufferLen < 0x0f)
             {
@@ -916,6 +918,15 @@ namespace jp.kshoji.rtpmidi
             }
 
 #if ENABLE_RTP_MIDI_JOURNAL
+            if (midiSection != null && midiSection.Length > 0)
+            {
+                var commands = RtpMidiCommandSection.Parse(midiSection);
+                for (var i = 0; i < commands.Count; i++)
+                {
+                    participant.journal.Record(commands[i]);
+                }
+            }
+
             rtpMidiFlags |= 0x40;
             var checkpointC = SelectSendCheckpoint(participant, packetSequenceI);
             var journalData = participant.journal.Encode(packetSequenceI, checkpointC);
@@ -931,9 +942,10 @@ namespace jp.kshoji.rtpmidi
             }
 
             // write out the MIDI Section
-            var outMidiArray = new byte[bufferLen];
-            participant.outMidiBuffer.CopyTo(outMidiArray, 0);
-            dataStream.Write(outMidiArray, 0, bufferLen);
+            if (bufferLen > 0)
+            {
+                dataStream.Write(midiSection, 0, bufferLen);
+            }
 
 #if ENABLE_RTP_MIDI_JOURNAL
             dataStream.Write(journalData, 0, journalData.Length);
@@ -1436,6 +1448,17 @@ namespace jp.kshoji.rtpmidi
         public void ReceivedMidi(RtpMidiParticipant participant, MidiType midiType, byte[] data)
         {
 #if ENABLE_RTP_MIDI_JOURNAL
+            if (IsSysExSegment(midiType, data))
+            {
+                if (!participant.receiveState.PushSysEx(data, out var finished) || finished == null)
+                {
+                    return;
+                }
+
+                rtpMidiEventHandler?.OnMidiSystemExclusive(GetDeviceId(participant), finished);
+                return;
+            }
+
             participant.receiveState.ObserveMidi(midiType, data);
 #endif
             switch (midiType)
@@ -1506,6 +1529,19 @@ namespace jp.kshoji.rtpmidi
                     break;
             }
         }
+
+#if ENABLE_RTP_MIDI_JOURNAL
+        private static bool IsSysExSegment(MidiType midiType, byte[] data)
+        {
+            if (data == null || data.Length < 2)
+            {
+                return false;
+            }
+
+            return midiType == MidiType.SystemExclusive || midiType == MidiType.SystemExclusiveEnd ||
+                   data[0] == 0xf0 || data[0] == 0xf7;
+        }
+#endif
 
         /// <summary>
         /// Process received RTP data

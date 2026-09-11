@@ -983,20 +983,26 @@ namespace jp.kshoji.rtpmidi
                     return false;
                 }
 
-                if (status == 0 || status == 1 || data == null)
+                if (status == 0)
                 {
+                    commands.Add(new RecoveredMidi(
+                        MidiType.SystemExclusive, 0, 0, 0, data ?? Array.Empty<byte>(), sysExStatus: 0));
                     continue;
                 }
 
-                var payload = new byte[data.Length + 2];
-                payload[0] = 0xf0;
-                for (var i = 0; i < data.Length; i++)
+                if (status == 1 || data == null)
                 {
-                    payload[i + 1] = (byte)(data[i] & 0x7f);
+                    if (status == 1)
+                    {
+                        commands.Add(new RecoveredMidi(
+                            MidiType.SystemExclusive, 0, 0, 0, Array.Empty<byte>(), sysExStatus: 1));
+                    }
+
+                    continue;
                 }
 
-                payload[payload.Length - 1] = 0xf7;
-                commands.Add(new RecoveredMidi(MidiType.SystemExclusive, 0, 0, 0, payload));
+                var payload = RtpMidiCommandSection.WrapFinished(data);
+                commands.Add(new RecoveredMidi(MidiType.SystemExclusive, 0, 0, 0, payload, sysExStatus: status));
             }
 
             return true;

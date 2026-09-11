@@ -27,7 +27,8 @@ namespace jp.kshoji.rtpmidi
             byte[] payload = null,
             RecoveredControlTool controlTool = RecoveredControlTool.None,
             int controlAlt = 0,
-            int noteRefCount = -1)
+            int noteRefCount = -1,
+            int sysExStatus = -1)
         {
             Type = type;
             Channel = channel;
@@ -37,6 +38,7 @@ namespace jp.kshoji.rtpmidi
             ControlTool = controlTool;
             ControlAlt = controlAlt;
             NoteRefCount = noteRefCount;
+            SysExStatus = sysExStatus;
         }
 
         public MidiType Type { get; }
@@ -47,6 +49,11 @@ namespace jp.kshoji.rtpmidi
         public RecoveredControlTool ControlTool { get; }
         public int ControlAlt { get; }
         public int NoteRefCount { get; }
+
+        /// <summary>
+        /// Chapter X T field: 0 incomplete, 1 cancelled, 2 dropped F7, 3 finished. -1 if not from Chapter X.
+        /// </summary>
+        public int SysExStatus { get; }
     }
 
     /// <summary>

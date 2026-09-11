@@ -381,19 +381,23 @@ namespace jp.kshoji.rtpmidi
         /// </summary>
         public void End()
         {
-            SendEndSession();
-
-#if ENABLE_RTP_MIDI_JOURNAL
             lock (participants)
             {
                 foreach (var participant in participants)
                 {
+#if ENABLE_RTP_MIDI_JOURNAL
+                    SendPeerIndefiniteClear(participant);
+#endif
+                    SendEndSession(participant);
+#if ENABLE_RTP_MIDI_JOURNAL
                     ClearIndefiniteArtifacts(participant);
+#endif
                 }
 
+#if ENABLE_RTP_MIDI_JOURNAL
                 participants.Clear();
-            }
 #endif
+            }
 
             controlPort?.Dispose();
             controlPort = null;
@@ -1204,6 +1208,7 @@ namespace jp.kshoji.rtpmidi
 #if ENABLE_RTP_MIDI_JOURNAL
                         if (ShouldDisconnectForJournalOverflow(participant))
                         {
+                            SendPeerIndefiniteClear(participant);
                             SendEndSession(participant);
                             participantsToRemove.Add(participant);
                             exceptionListener?.OnError(RtpMidiExceptionKind.RecoveryJournalOverflowException);
@@ -1215,6 +1220,9 @@ namespace jp.kshoji.rtpmidi
                         {
                             if (RtpMidiClock.Ticks() - participant.lastSyncExchangeTime > CkMaxTimeOut)
                             {
+#if ENABLE_RTP_MIDI_JOURNAL
+                                SendPeerIndefiniteClear(participant);
+#endif
                                 SendEndSession(participant);
                                 participantsToRemove.Add(participant);
                                 exceptionListener?.OnError(RtpMidiExceptionKind.ListenerTimeOutException);
@@ -1254,6 +1262,9 @@ namespace jp.kshoji.rtpmidi
             {
                 if (participant.synchronizationCount > MaxSynchronizationCk0Attempts)
                 {
+#if ENABLE_RTP_MIDI_JOURNAL
+                    SendPeerIndefiniteClear(participant);
+#endif
                     SendEndSession(participant);
                     return true;
                 }
@@ -1790,6 +1801,39 @@ namespace jp.kshoji.rtpmidi
                 case MidiType.SystemReset:
                     rtpMidiEventHandler.OnMidiReset(deviceId);
                     break;
+            }
+        }
+
+        private void SendPeerIndefiniteClear(RtpMidiParticipant participant)
+        {
+            if (participant == null ||
+                !RtpMidiIndefiniteState.ShouldNotifyPeer(false, participant.invitationStatus == InviteStatus.Connected))
+            {
+                return;
+            }
+
+            try
+            {
+                lock (participant.outMidiBuffer)
+                {
+                    if (participant.outMidiBuffer.Count > 0)
+                    {
+                        WriteRtpMidiBuffer(participant);
+                        participant.outMidiBuffer.Clear();
+                    }
+                }
+
+                var sections = RtpMidiCommandSection.Pack(
+                    RtpMidiIndefiniteState.PeerClearCommands(),
+                    RtpMidiParticipant.MaxBufferSize);
+                for (var i = 0; i < sections.Count; i++)
+                {
+                    WriteRtpMidiPacket(participant, sections[i]);
+                }
+            }
+            catch
+            {
+                // RFC 6295 §3.5 SHOULD: if the peer-clear packet cannot be sent, proceed to BY.
             }
         }
 

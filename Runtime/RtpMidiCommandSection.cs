@@ -131,6 +131,51 @@ namespace jp.kshoji.rtpmidi
             return commands;
         }
 
+        /// <summary>
+        /// Packs complete MIDI commands into command sections with zero delta-times, without exceeding
+        /// <paramref name="maxBufferSize"/>.
+        /// </summary>
+        public static List<byte[]> Pack(IReadOnlyList<byte[]> commands, int maxBufferSize)
+        {
+            var packets = new List<byte[]>();
+            if (commands == null || commands.Count == 0 || maxBufferSize <= 0)
+            {
+                return packets;
+            }
+
+            var buffer = new List<byte>(maxBufferSize);
+            for (var i = 0; i < commands.Count; i++)
+            {
+                var command = commands[i];
+                if (command == null || command.Length == 0)
+                {
+                    continue;
+                }
+
+                var extra = buffer.Count == 0 ? command.Length : 1 + command.Length;
+                if (buffer.Count > 0 && buffer.Count + extra > maxBufferSize)
+                {
+                    packets.Add(buffer.ToArray());
+                    buffer.Clear();
+                    extra = command.Length;
+                }
+
+                if (buffer.Count > 0)
+                {
+                    buffer.Add(0x00);
+                }
+
+                buffer.AddRange(command);
+            }
+
+            if (buffer.Count > 0)
+            {
+                packets.Add(buffer.ToArray());
+            }
+
+            return packets;
+        }
+
         public static bool TryClassifySysEx(byte[] midi, out SysExKind kind, out byte[] data)
         {
             kind = SysExKind.None;

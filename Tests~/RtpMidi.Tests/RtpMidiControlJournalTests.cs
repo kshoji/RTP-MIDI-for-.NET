@@ -4,7 +4,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase4Tests
+    public class RtpMidiControlJournalTests
     {
         [Fact]
         public void Volume_UsesValueTool_AndDecodesBack()

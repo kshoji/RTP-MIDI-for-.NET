@@ -4,7 +4,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase3Tests
+    public class RtpMidiNoteJournalTests
     {
         [Fact]
         public void NoteOnOnly_EmitsNoteLog_NotOffbits()

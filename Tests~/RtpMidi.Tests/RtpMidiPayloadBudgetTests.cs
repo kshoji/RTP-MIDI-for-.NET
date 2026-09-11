@@ -3,7 +3,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase10Tests
+    public class RtpMidiPayloadBudgetTests
     {
         [Fact]
         public void EmptyMidiPacket_FitsJournalUpToUdpLimit()

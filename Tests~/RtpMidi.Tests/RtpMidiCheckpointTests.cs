@@ -3,7 +3,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase2Tests
+    public class RtpMidiCheckpointTests
     {
         [Fact]
         public void EmptyHistory_UsesCheckpointEqualToPacketI()

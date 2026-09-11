@@ -3,7 +3,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase6Tests
+    public class RtpMidiSystemJournalTests
     {
         [Fact]
         public void Reset_EmitsChapterD_AndDecodesBack()

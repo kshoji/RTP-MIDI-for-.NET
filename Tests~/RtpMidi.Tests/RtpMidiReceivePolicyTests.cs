@@ -4,7 +4,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase1Tests
+    public class RtpMidiReceivePolicyTests
     {
         [Theory]
         [InlineData(true, (ushort)0, (ushort)10, RtpPacketReceiveKind.First)]

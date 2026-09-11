@@ -3,7 +3,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase0Tests
+    public class RtpMidiJournalSectionTests
     {
         [Fact]
         public void EmptyJournal_IsThreeOctets_WithSSetAndHClear()

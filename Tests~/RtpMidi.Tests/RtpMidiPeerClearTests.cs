@@ -4,7 +4,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase11Tests
+    public class RtpMidiPeerClearTests
     {
         [Fact]
         public void LocalClear_StillEmitsAllSoundOffRacAndNotesOffOnEveryChannel()

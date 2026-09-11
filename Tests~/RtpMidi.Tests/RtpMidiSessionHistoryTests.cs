@@ -4,7 +4,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase8Tests
+    public class RtpMidiSessionHistoryTests
     {
         [Fact]
         public void PrunePastBank_KeepsBankInChapterP()

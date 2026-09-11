@@ -4,7 +4,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase7Tests
+    public class RtpMidiJournalDeltaTests
     {
         [Fact]
         public void SustainOnOffOn_LostOff_ReplaysOffThenOn()

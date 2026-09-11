@@ -5,7 +5,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase5Tests
+    public class RtpMidiVoiceJournalTests
     {
         [Fact]
         public void ProgramChange_EmitsChapterP_AndDecodesBack()

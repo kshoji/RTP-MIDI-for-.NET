@@ -5,7 +5,7 @@ using Xunit;
 
 namespace RtpMidi.Tests
 {
-    public class RtpMidiJournalPhase9Tests
+    public class RtpMidiSysExSegmentTests
     {
         [Fact]
         public void SysExFittingInOnePacket_IsFinishedChapterX()

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using Random = System.Random;
 
 namespace jp.kshoji.rtpmidi
@@ -178,6 +179,7 @@ namespace jp.kshoji.rtpmidi
         /// Disconnect when RS stalls and unacked send sequences exceed this span.
         /// </summary>
         private const uint MaxUnackedJournalPackets = 512;
+        private int outboundMidiPacketsToDrop;
 #endif
 
         // The initiator must initiate a new sync exchange at least once every 60 seconds
@@ -943,10 +945,46 @@ namespace jp.kshoji.rtpmidi
 
             participant.hasSentRtpMidi = true;
             participant.lastRtpMidiSendTime = RtpMidiClock.Ticks();
+            if (bufferLen > 0 && ConsumeOutboundMidiDrop())
+            {
+                return;
+            }
 #endif
 
             dataPort?.Send(dataStream.ToArray(), (int)dataStream.Length, participant.DataEndPoint);
         }
+
+#if ENABLE_RTP_MIDI_JOURNAL
+        /// <summary>
+        /// Arms a drop of the next MIDI-bearing RTP packets. Sequence and journal still advance.
+        /// Empty trailing-loss packets are not dropped, so they can still repair the skipped packet.
+        /// </summary>
+        internal void DropNextOutboundMidiPackets(int count)
+        {
+            if (count < 0)
+            {
+                count = 0;
+            }
+
+            Interlocked.Exchange(ref outboundMidiPacketsToDrop, count);
+        }
+
+        internal int OutboundMidiPacketsToDrop
+        {
+            get { return Interlocked.CompareExchange(ref outboundMidiPacketsToDrop, 0, 0); }
+        }
+
+        private bool ConsumeOutboundMidiDrop()
+        {
+            if (Interlocked.Decrement(ref outboundMidiPacketsToDrop) >= 0)
+            {
+                return true;
+            }
+
+            Interlocked.Increment(ref outboundMidiPacketsToDrop);
+            return false;
+        }
+#endif
 
         internal void ManageSessionInvites()
         {
@@ -1422,13 +1460,23 @@ namespace jp.kshoji.rtpmidi
                     rtpMidiEventHandler?.OnMidiSystemExclusive(GetDeviceId(participant), data);
                     break;
                 case MidiType.TimeCodeQuarterFrame:
-                    rtpMidiEventHandler?.OnMidiTimeCodeQuarterFrame(GetDeviceId(participant), data[0]);
+                    // data[0] is the status byte. The timing nibble follows it, same as journal recovery.
+                    if (data.Length >= 2)
+                    {
+                        rtpMidiEventHandler?.OnMidiTimeCodeQuarterFrame(GetDeviceId(participant), data[1]);
+                    }
                     break;
                 case MidiType.SongPosition:
-                    rtpMidiEventHandler?.OnMidiSongPositionPointer(GetDeviceId(participant), data[0] | (data[1] << 7));
+                    if (data.Length >= 3)
+                    {
+                        rtpMidiEventHandler?.OnMidiSongPositionPointer(GetDeviceId(participant), data[1] | (data[2] << 7));
+                    }
                     break;
                 case MidiType.SongSelect:
-                    rtpMidiEventHandler?.OnMidiSongSelect(GetDeviceId(participant), data[0]);
+                    if (data.Length >= 2)
+                    {
+                        rtpMidiEventHandler?.OnMidiSongSelect(GetDeviceId(participant), data[1]);
+                    }
                     break;
                 case MidiType.TuneRequest:
                     rtpMidiEventHandler?.OnMidiTuneRequest(GetDeviceId(participant));

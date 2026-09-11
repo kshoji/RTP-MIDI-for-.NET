@@ -1,0 +1,7 @@
+<Project>
+  <!-- Unity imports every .dll under the package. Keep SDK outputs in a ~ folder so they are not imported. -->
+  <PropertyGroup>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)..\build~\Runtime\bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\build~\Runtime\obj\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

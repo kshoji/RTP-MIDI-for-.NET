@@ -38,7 +38,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
     int shownLogCount;
     bool busy;
     bool failed;
-    string status = "停止中";
+    string status = "Idle";
 
     void Awake()
     {
@@ -72,10 +72,10 @@ public sealed class JournalLoopbackSample : MonoBehaviour
     {
         var area = new Rect(12, 12, Screen.width - 24, Screen.height - 24);
         GUILayout.BeginArea(area);
-        GUILayout.Label("RTP-MIDI Recovery Journal ループバック");
+        GUILayout.Label("RTP-MIDI Recovery Journal loopback");
         GUILayout.Label(JournalEnabled
-            ? "ENABLE_RTP_MIDI_JOURNAL は有効です。ライブラリ既定値はオフのままです。"
-            : "ENABLE_RTP_MIDI_JOURNAL が無効です。回復シナリオは実行できません。");
+            ? "ENABLE_RTP_MIDI_JOURNAL is enabled. Recovery journals are on by default."
+            : "ENABLE_RTP_MIDI_JOURNAL is disabled. Recovery scenarios cannot run.");
         GUILayout.Label(status);
         GUILayout.Label(listenerSide.Summary());
 
@@ -83,7 +83,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         GUILayout.BeginVertical(GUILayout.Width(340));
         DrawButtons();
         GUILayout.Space(8);
-        GUILayout.Label("結果");
+        GUILayout.Label("Results");
         for (var i = 0; i < results.Count; i++)
         {
             GUILayout.Label(results[i]);
@@ -111,58 +111,58 @@ public sealed class JournalLoopbackSample : MonoBehaviour
     void DrawButtons()
     {
         GUI.enabled = !busy;
-        if (GUILayout.Button("すべて実行"))
+        if (GUILayout.Button("Run all"))
         {
             StartCoroutine(RunAll());
         }
 
-        if (GUILayout.Button("接続"))
+        if (GUILayout.Button("Connect"))
         {
-            StartCoroutine(RunSingle(EnsureConnected, "接続"));
+            StartCoroutine(RunSingle(EnsureConnected, "Connect"));
         }
 
-        if (GUILayout.Button("ライブ Note On/Off"))
+        if (GUILayout.Button("Live Note On/Off"))
         {
-            StartCoroutine(RunSingle(LiveNoteRoundTrip, "ライブ Note On/Off"));
+            StartCoroutine(RunSingle(LiveNoteRoundTrip, "Live Note On/Off"));
         }
 
         GUI.enabled = !busy && JournalEnabled;
-        if (GUILayout.Button("NoteOff 損失 → 後続で回復"))
+        if (GUILayout.Button("Lost Note Off → recover from later packet"))
         {
-            StartCoroutine(RunSingle(LostNoteOffRecoveredByFollowing, "NoteOff 損失回復"));
+            StartCoroutine(RunSingle(LostNoteOffRecoveredByFollowing, "Lost Note Off recovery"));
         }
 
-        if (GUILayout.Button("Volume 損失 → 後続で回復"))
+        if (GUILayout.Button("Lost Volume → recover from later packet"))
         {
-            StartCoroutine(RunSingle(LostVolumeRecoveredByFollowing, "Volume 損失回復"));
+            StartCoroutine(RunSingle(LostVolumeRecoveredByFollowing, "Lost Volume recovery"));
         }
 
-        if (GUILayout.Button("Program / Pitch 損失回復"))
+        if (GUILayout.Button("Lost Program / Pitch recovery"))
         {
-            StartCoroutine(RunSingle(LostProgramAndPitch, "Program / Pitch 損失回復"));
+            StartCoroutine(RunSingle(LostProgramAndPitch, "Lost Program / Pitch recovery"));
         }
 
-        if (GUILayout.Button("末尾損失 (trailing)"))
+        if (GUILayout.Button("Trailing loss"))
         {
-            StartCoroutine(RunSingle(TrailingNoteOff, "末尾損失"));
+            StartCoroutine(RunSingle(TrailingNoteOff, "Trailing loss"));
         }
 
-        if (GUILayout.Button("切断時の掃除"))
+        if (GUILayout.Button("Disconnect cleanup"))
         {
-            StartCoroutine(RunSingle(DisconnectCleanup, "切断時の掃除"));
+            StartCoroutine(RunSingle(DisconnectCleanup, "Disconnect cleanup"));
         }
 
         GUI.enabled = !busy;
-        if (GUILayout.Button("システムメッセージ到達"))
+        if (GUILayout.Button("System messages"))
         {
-            StartCoroutine(RunSingle(LiveSystemMessages, "システムメッセージ"));
+            StartCoroutine(RunSingle(LiveSystemMessages, "System messages"));
         }
 
-        if (GUILayout.Button("切断して停止"))
+        if (GUILayout.Button("Disconnect and stop"))
         {
             StopServers();
-            status = "停止中";
-            Log("停止しました");
+            status = "Idle";
+            Log("Stopped");
         }
 
         GUI.enabled = true;
@@ -178,26 +178,26 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         busy = true;
         failed = false;
         results.Clear();
-        Log("--- すべて実行 ---");
+        Log("--- Run all ---");
         yield return EnsureConnected();
-        yield return RunStep("ライブ Note On/Off", LiveNoteRoundTrip);
+        yield return RunStep("Live Note On/Off", LiveNoteRoundTrip);
         if (JournalEnabled)
         {
-            yield return RunStep("NoteOff 損失回復", LostNoteOffRecoveredByFollowing);
-            yield return RunStep("Volume 損失回復", LostVolumeRecoveredByFollowing);
-            yield return RunStep("Program / Pitch 損失回復", LostProgramAndPitch);
-            yield return RunStep("システムメッセージ", LiveSystemMessages);
-            yield return RunStep("末尾損失", TrailingNoteOff);
-            yield return RunStep("切断時の掃除", DisconnectCleanup);
+            yield return RunStep("Lost Note Off recovery", LostNoteOffRecoveredByFollowing);
+            yield return RunStep("Lost Volume recovery", LostVolumeRecoveredByFollowing);
+            yield return RunStep("Lost Program / Pitch recovery", LostProgramAndPitch);
+            yield return RunStep("System messages", LiveSystemMessages);
+            yield return RunStep("Trailing loss", TrailingNoteOff);
+            yield return RunStep("Disconnect cleanup", DisconnectCleanup);
         }
         else
         {
-            yield return RunStep("システムメッセージ", LiveSystemMessages);
-            Log("回復シナリオは ENABLE_RTP_MIDI_JOURNAL が必要なためスキップしました");
+            yield return RunStep("System messages", LiveSystemMessages);
+            Log("Skipped recovery scenarios; ENABLE_RTP_MIDI_JOURNAL is required");
         }
 
-        Log(failed ? "--- 失敗あり ---" : "--- すべて成功 ---");
-        status = failed ? "失敗あり" : "すべて成功";
+        Log(failed ? "--- Failures ---" : "--- All passed ---");
+        status = failed ? "Failures" : "All passed";
         busy = false;
     }
 
@@ -212,7 +212,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         failed = false;
         results.Clear();
         yield return RunStep(name, step);
-        status = failed ? "失敗" : "成功";
+        status = failed ? "Failed" : "Passed";
         busy = false;
     }
 
@@ -249,14 +249,14 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         listener.Start();
         initiator.Start();
         initiator.ConnectToListener(new IPEndPoint(IPAddress.Loopback, ListenerPort));
-        status = "接続待ち";
+        status = "Waiting for connection";
         yield return WaitUntil(
             () => listenerSide.Attached && initiatorSide.Attached,
             HandshakeTimeoutSeconds,
-            "AppleMIDI ハンドシェイクが完了しませんでした");
+            "AppleMIDI handshake did not complete");
         if (!failed)
         {
-            Log("接続しました listener=" + listenerSide.PeerDeviceId + " initiator=" + initiatorSide.PeerDeviceId);
+            Log("Connected listener=" + listenerSide.PeerDeviceId + " initiator=" + initiatorSide.PeerDeviceId);
         }
     }
 
@@ -276,14 +276,14 @@ public sealed class JournalLoopbackSample : MonoBehaviour
 
         listenerSide.Arm();
         Send(server => server.SendMidiNoteOn(PeerId(), Channel, 60, 100));
-        yield return WaitUntil(() => listenerSide.NoteDown(Channel, 60), EventTimeoutSeconds, "Note On 60 が届きませんでした");
+        yield return WaitUntil(() => listenerSide.NoteDown(Channel, 60), EventTimeoutSeconds, "Note On 60 did not arrive");
         if (failed)
         {
             yield break;
         }
 
         Send(server => server.SendMidiNoteOff(PeerId(), Channel, 60, 0));
-        yield return WaitUntil(() => !listenerSide.NoteDown(Channel, 60), EventTimeoutSeconds, "Note Off 60 が届きませんでした");
+        yield return WaitUntil(() => !listenerSide.NoteDown(Channel, 60), EventTimeoutSeconds, "Note Off 60 did not arrive");
     }
 
     IEnumerator LostNoteOffRecoveredByFollowing()
@@ -301,7 +301,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         }
 
         Send(server => server.SendMidiNoteOff(PeerId(), Channel, 60, 0));
-        yield return WaitUntilDropConsumed("破棄した Note Off が送信バッファから出ていません");
+        yield return WaitUntilDropConsumed("Dropped Note Off did not leave the send buffer");
         if (failed)
         {
             yield break;
@@ -309,7 +309,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
 
         if (!listenerSide.NoteDown(Channel, 60))
         {
-            Fail("Note Off が破棄されず、そのまま届きました");
+            Fail("Note Off was not dropped and arrived live");
             yield break;
         }
 
@@ -318,7 +318,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         yield return WaitUntil(
             () => !listenerSide.NoteDown(Channel, 60) && listenerSide.ControlSinceArm(1, 7),
             EventTimeoutSeconds,
-            "後続パケットのジャーナルで Note Off が回復しませんでした");
+            "Later journal did not recover Note Off");
     }
 
     IEnumerator LostVolumeRecoveredByFollowing()
@@ -331,7 +331,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
 
         listenerSide.Arm();
         Send(server => server.SendMidiControlChange(PeerId(), Channel, 7, 40));
-        yield return WaitUntil(() => listenerSide.ControlSinceArm(7, 40), EventTimeoutSeconds, "Volume 40 が届きませんでした");
+        yield return WaitUntil(() => listenerSide.ControlSinceArm(7, 40), EventTimeoutSeconds, "Volume 40 did not arrive");
         if (failed)
         {
             yield break;
@@ -344,7 +344,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         }
 
         Send(server => server.SendMidiControlChange(PeerId(), Channel, 7, 90));
-        yield return WaitUntilDropConsumed("破棄した Volume が送信バッファから出ていません");
+        yield return WaitUntilDropConsumed("Dropped Volume did not leave the send buffer");
         if (failed)
         {
             yield break;
@@ -352,7 +352,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
 
         if (listenerSide.ControlIs(7, 90))
         {
-            Fail("Volume 90 が破棄されず、そのまま届きました");
+            Fail("Volume 90 was not dropped and arrived live");
             yield break;
         }
 
@@ -361,14 +361,14 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         yield return WaitUntil(
             () => listenerSide.ControlSinceArm(7, 90) && listenerSide.NoteDown(Channel, 62),
             EventTimeoutSeconds,
-            "後続パケットのジャーナルで Volume 90 が回復しませんでした");
+            "Later journal did not recover Volume 90");
         if (failed)
         {
             yield break;
         }
 
         Send(server => server.SendMidiNoteOff(PeerId(), Channel, 62, 0));
-        yield return WaitUntil(() => !listenerSide.NoteDown(Channel, 62), EventTimeoutSeconds, "回復確認用の Note Off が届きませんでした");
+        yield return WaitUntil(() => !listenerSide.NoteDown(Channel, 62), EventTimeoutSeconds, "Probe Note Off did not arrive");
     }
 
     IEnumerator LostProgramAndPitch()
@@ -381,7 +381,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
 
         listenerSide.Arm();
         Send(server => server.SendMidiProgramChange(PeerId(), Channel, 3));
-        yield return WaitUntil(() => listenerSide.ProgramSinceArm(3), EventTimeoutSeconds, "Program 3 が届きませんでした");
+        yield return WaitUntil(() => listenerSide.ProgramSinceArm(3), EventTimeoutSeconds, "Program 3 did not arrive");
         if (failed)
         {
             yield break;
@@ -394,7 +394,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         }
 
         Send(server => server.SendMidiProgramChange(PeerId(), Channel, 12));
-        yield return WaitUntilDropConsumed("破棄した Program Change が送信バッファから出ていません");
+        yield return WaitUntilDropConsumed("Dropped Program Change did not leave the send buffer");
         if (failed)
         {
             yield break;
@@ -405,14 +405,14 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         yield return WaitUntil(
             () => listenerSide.ProgramSinceArm(12) && listenerSide.NoteDown(Channel, 64),
             EventTimeoutSeconds,
-            "後続パケットのジャーナルで Program 12 が回復しませんでした");
+            "Later journal did not recover Program 12");
         if (failed)
         {
             yield break;
         }
 
         Send(server => server.SendMidiNoteOff(PeerId(), Channel, 64, 0));
-        yield return WaitUntil(() => !listenerSide.NoteDown(Channel, 64), EventTimeoutSeconds, "Program 確認用の Note Off が届きませんでした");
+        yield return WaitUntil(() => !listenerSide.NoteDown(Channel, 64), EventTimeoutSeconds, "Program probe Note Off did not arrive");
         if (failed)
         {
             yield break;
@@ -420,7 +420,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
 
         listenerSide.Arm();
         Send(server => server.SendMidiPitchWheel(PeerId(), Channel, 8192));
-        yield return WaitUntil(() => listenerSide.PitchSinceArm(8192), EventTimeoutSeconds, "Pitch 8192 が届きませんでした");
+        yield return WaitUntil(() => listenerSide.PitchSinceArm(8192), EventTimeoutSeconds, "Pitch 8192 did not arrive");
         if (failed)
         {
             yield break;
@@ -433,7 +433,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         }
 
         Send(server => server.SendMidiPitchWheel(PeerId(), Channel, 10000));
-        yield return WaitUntilDropConsumed("破棄した Pitch Bend が送信バッファから出ていません");
+        yield return WaitUntilDropConsumed("Dropped Pitch Bend did not leave the send buffer");
         if (failed)
         {
             yield break;
@@ -444,14 +444,14 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         yield return WaitUntil(
             () => listenerSide.PitchSinceArm(10000) && listenerSide.NoteDown(Channel, 65),
             EventTimeoutSeconds,
-            "後続パケットのジャーナルで Pitch 10000 が回復しませんでした");
+            "Later journal did not recover Pitch 10000");
         if (failed)
         {
             yield break;
         }
 
         Send(server => server.SendMidiNoteOff(PeerId(), Channel, 65, 0));
-        yield return WaitUntil(() => !listenerSide.NoteDown(Channel, 65), EventTimeoutSeconds, "Pitch 確認用の Note Off が届きませんでした");
+        yield return WaitUntil(() => !listenerSide.NoteDown(Channel, 65), EventTimeoutSeconds, "Pitch probe Note Off did not arrive");
     }
 
     IEnumerator LiveSystemMessages()
@@ -465,7 +465,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         var sysex = new byte[] { 0xf0, 0x7d, 0x01, 0x02, 0xf7 };
         listenerSide.Arm();
         Send(server => server.SendMidiSystemExclusive(PeerId(), sysex));
-        yield return WaitUntil(() => listenerSide.SysExSinceArm(0x7d, 0x01, 0x02), EventTimeoutSeconds, "SysEx が届きませんでした");
+        yield return WaitUntil(() => listenerSide.SysExSinceArm(0x7d, 0x01, 0x02), EventTimeoutSeconds, "SysEx did not arrive");
         if (failed)
         {
             yield break;
@@ -473,7 +473,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
 
         listenerSide.Arm();
         Send(server => server.SendMidiTimeCodeQuarterFrame(PeerId(), 0x21));
-        yield return WaitUntil(() => listenerSide.QuarterFrameSinceArm(0x21), EventTimeoutSeconds, "Quarter Frame が届きませんでした");
+        yield return WaitUntil(() => listenerSide.QuarterFrameSinceArm(0x21), EventTimeoutSeconds, "Quarter Frame did not arrive");
         if (failed)
         {
             yield break;
@@ -485,7 +485,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         yield return WaitUntil(
             () => listenerSide.StartedSinceArm && listenerSide.ClockSinceArm,
             EventTimeoutSeconds,
-            "Start または Timing Clock が届きませんでした");
+            "Start or Timing Clock did not arrive");
     }
 
     IEnumerator TrailingNoteOff()
@@ -503,7 +503,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         }
 
         Send(server => server.SendMidiNoteOff(PeerId(), Channel, 67, 0));
-        yield return WaitUntilDropConsumed("破棄した Note Off が送信バッファから出ていません");
+        yield return WaitUntilDropConsumed("Dropped Note Off did not leave the send buffer");
         if (failed)
         {
             yield break;
@@ -511,15 +511,15 @@ public sealed class JournalLoopbackSample : MonoBehaviour
 
         if (!listenerSide.NoteDown(Channel, 67))
         {
-            Fail("末尾損失の Note Off が破棄されず、そのまま届きました");
+            Fail("Trailing Note Off was not dropped and arrived live");
             yield break;
         }
 
-        Log("追加送信せず、trailing journal を待ちます");
+        Log("Waiting for trailing journal with no extra MIDI");
         yield return WaitUntil(
             () => !listenerSide.NoteDown(Channel, 67),
             TrailingTimeoutSeconds,
-            "trailing journal で Note Off が回復しませんでした");
+            "Trailing journal did not recover Note Off");
     }
 
     IEnumerator DisconnectCleanup()
@@ -531,7 +531,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         }
 
         listenerSide.Arm();
-        Log("ノートを押したまま Initiator を停止します");
+        Log("Stopping Initiator with a note held");
         var stopping = initiator;
         initiator = null;
         initiatorSide.ResetConnection();
@@ -540,10 +540,10 @@ public sealed class JournalLoopbackSample : MonoBehaviour
         yield return WaitUntil(
             () => listenerSide.CleanupSinceArm && listenerSide.DetachedSinceArm,
             EventTimeoutSeconds,
-            "切断時の All Sound Off / Reset All Controllers / All Notes Off または切断通知がありません");
+            "No All Sound Off / Reset All Controllers / All Notes Off or detach on disconnect");
         if (!failed)
         {
-            Log("切断掃除を確認しました。押下中ノートは Listener 側で解除されています");
+            Log("Disconnect cleanup confirmed; held notes released on Listener");
         }
     }
 
@@ -563,7 +563,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
 
         listenerSide.Arm();
         Send(server => server.SendMidiNoteOn(PeerId(), Channel, note, velocity));
-        yield return WaitUntil(() => listenerSide.NoteDown(Channel, note), EventTimeoutSeconds, "Note On " + note + " が届きませんでした");
+        yield return WaitUntil(() => listenerSide.NoteDown(Channel, note), EventTimeoutSeconds, "Note On " + note + " did not arrive");
     }
 
     IEnumerator ReleaseHeldNotes()
@@ -580,16 +580,16 @@ public sealed class JournalLoopbackSample : MonoBehaviour
             Send(server => server.SendMidiNoteOff(PeerId(), Channel, note, 0));
         }
 
-        yield return WaitUntil(() => listenerSide.HeldNotes().Count == 0, EventTimeoutSeconds, "押下中のノートを解除できませんでした");
+        yield return WaitUntil(() => listenerSide.HeldNotes().Count == 0, EventTimeoutSeconds, "Held notes were not released");
     }
 
     IEnumerator DropOne(string what)
     {
 #if ENABLE_RTP_MIDI_JOURNAL
         initiator.DropNextOutboundMidiPackets(1);
-        Log("次の MIDI パケットを破棄します: " + what);
+        Log("Dropping next MIDI packet: " + what);
 #else
-        Fail("ENABLE_RTP_MIDI_JOURNAL が無効です");
+        Fail("ENABLE_RTP_MIDI_JOURNAL is disabled");
 #endif
         yield break;
     }
@@ -644,7 +644,7 @@ public sealed class JournalLoopbackSample : MonoBehaviour
 
         failed = true;
         Log("NG: " + message);
-        status = "失敗: " + message;
+        status = "Failed: " + message;
     }
 
     void Log(string message)

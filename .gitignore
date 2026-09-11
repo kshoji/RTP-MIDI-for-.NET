@@ -78,6 +78,9 @@ StyleCopReport.xml
 *.pgc
 *.pgd
 *.rsp
+# Unity compiler response that ships with this package
+!Runtime/csc.rsp
+!Runtime/mcs.rsp
 *.sbr
 *.tlb
 *.tli

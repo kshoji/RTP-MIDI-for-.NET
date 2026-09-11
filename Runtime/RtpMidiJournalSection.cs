@@ -2,7 +2,7 @@ namespace jp.kshoji.rtpmidi
 {
     /// <summary>
     /// Recovery Journal section layout helpers (RFC 6295 §5, Appendix A.1).
-    /// Phase 0 consumes the section by LENGTH; chapter bodies are not interpreted.
+    /// LENGTH bounds the section; chapter readers interpret the bodies.
     /// </summary>
     public static class RtpMidiJournalSection
     {

@@ -18,7 +18,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Runtime\Runtime.csproj" />
+    <ProjectReference Include="..\..\Runtime\Runtime.csproj">
+      <Properties>EnableRtpMidiJournal=$(EnableRtpMidiJournal)</Properties>
+    </ProjectReference>
   </ItemGroup>
 
 </Project>

@@ -1,19 +1,19 @@
 # Journal Loopback
 
-Recovery Journal の結合確認用 Unity プロジェクトです。単体テストがカバーするチャプタのバイト列はここでは見ません。localhost の AppleMIDI セッション上で、次だけを確認します。
+Unity project for Recovery Journal integration checks that unit tests do not cover. It does not inspect chapter byte layouts. On a localhost AppleMIDI session it checks:
 
-- ハンドシェイク
-- J=1 のまま Note On/Off、SysEx、Quarter Frame、Start、Timing Clock が届く
-- Note Off / Volume / Program / Pitch Bend を1パケット落としたあと、後続パケットのジャーナルで回復する
-- 後続を送らず、trailing journal だけで Note Off が回復する
-- ノートを押したまま切断すると、Listener に All Sound Off、Reset All Controllers、All Notes Off が出て切断通知が来る
+- Handshake
+- Note On/Off, SysEx, Quarter Frame, Start, and Timing Clock arrive with `J=1`
+- Note Off / Volume / Program / Pitch Bend lost in one packet are repaired by a later journal
+- Note Off recovers from a trailing journal with no extra MIDI
+- Disconnecting with a note held delivers All Sound Off, Reset All Controllers, and All Notes Off to the Listener, plus a detach notification
 
-`ENABLE_RTP_MIDI_JOURNAL` はこのプロジェクトの Player Settings だけで有効です。ライブラリの既定値はオフのままです。
+Recovery journals are **on by default** in the library (`ENABLE_RTP_MIDI_JOURNAL` via `Runtime/csc.rsp`). This sample also adds the symbol in Player Settings so its own recovery scenarios compile.
 
-## 実行
+## Run
 
-1. Unity 2019.4 以降（2021.3 を推奨）で `Samples~/JournalLoopback` を開く。
-2. 初回は `Assets/Scenes/JournalLoopback.unity` が開きます。違う場合はメニュー `RTP-MIDI/Open Journal Loopback Sample`。
-3. Play して **すべて実行**。
+1. Open `Samples~/JournalLoopback` in Unity 2019.4 or later (2021.3 recommended).
+2. The first launch opens `Assets/Scenes/JournalLoopback.unity`. If it does not, use the menu `RTP-MIDI/Open Journal Loopback Sample`.
+3. Enter Play Mode and click **Run all**.
 
-Listener の制御ポートは 50104、Initiator は 50114 です。使用中だと接続に失敗します。
+Listener control port is 50104; Initiator is 50114. The handshake fails if those ports are already in use.

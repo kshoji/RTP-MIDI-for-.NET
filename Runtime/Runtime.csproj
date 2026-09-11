@@ -4,8 +4,8 @@
     <TargetFramework>net6.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>warnings</Nullable>
-    <!-- Default off. Pass -p:EnableRtpMidiJournal=true to send RFC 6295 recovery journals. -->
-    <EnableRtpMidiJournal Condition="'$(EnableRtpMidiJournal)' == ''">false</EnableRtpMidiJournal>
+    <!-- Default on. Pass -p:EnableRtpMidiJournal=false to omit RFC 6295 recovery journals. -->
+    <EnableRtpMidiJournal Condition="'$(EnableRtpMidiJournal)' == ''">true</EnableRtpMidiJournal>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(EnableRtpMidiJournal)' == 'true'">

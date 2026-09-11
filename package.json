@@ -1,8 +1,8 @@
 {
   "name": "jp.kshoji.midisystem",
   "displayName": "RTP-MIDI",
-  "description": "RTP-MIDI porting for .NET / Unity",
-  "version": "1.0.0",
+  "description": "RTP-MIDI for .NET / Unity, with RFC 6295 Recovery Journal",
+  "version": "1.1.0",
   "unity": "2018.4",
   "license": "Apache-2.0",
   "repository": {
@@ -15,6 +15,7 @@
   "licensesUrl": "https://github.com/kshoji/RTP-MIDI-for-.NET/blob/main/LICENSE",
   "keywords": [
     "midi",
-    "rtp"
+    "rtp",
+    "rtp-midi"
   ]
 }

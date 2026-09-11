@@ -20,7 +20,7 @@ static class JournalLoopbackProjectSetup
     {
         if (EditorApplication.isPlayingOrWillChangePlaymode)
         {
-            Debug.Log("Play 中はシーンを開けません。Play を止めてから開いてください。");
+            Debug.Log("Cannot open the scene while Play Mode is active. Stop Play Mode first.");
             return;
         }
 
@@ -45,7 +45,7 @@ static class JournalLoopbackProjectSetup
 
         var next = string.IsNullOrEmpty(current) ? Symbol : current + ";" + Symbol;
         PlayerSettings.SetScriptingDefineSymbolsForGroup(group, next);
-        Debug.Log(Symbol + " を Player Settings に追加しました。このプロジェクトだけで有効です。");
+        Debug.Log(Symbol + " was added to Player Settings so this sample can compile recovery scenarios.");
     }
 
     static void OpenSampleOnce()

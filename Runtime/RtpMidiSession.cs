@@ -104,6 +104,7 @@ namespace jp.kshoji.rtpmidi
         internal long lastRtpMidiSendTime;
         internal bool hasSentRtpMidi;
         internal uint firstSentSequenceExtended;
+        internal bool journalOctetOverflow;
 #endif
 
         internal long lastSyncExchangeTime;
@@ -869,6 +870,35 @@ namespace jp.kshoji.rtpmidi
 
         private void WriteRtpMidiPacket(RtpMidiParticipant participant, byte[] midiSection)
         {
+            midiSection = midiSection ?? System.Array.Empty<byte>();
+            var bufferLen = midiSection.Length;
+#if ENABLE_RTP_MIDI_JOURNAL
+            byte[] journalData;
+            var pruneAfterSend = false;
+            var pruneCheckpoint = (ushort)0;
+            var deferJournal = false;
+            var packetSequenceI = RtpSequenceNumber.Low16(participant.sendSequenceNrExtended + 1);
+            var checkpointC = SelectSendCheckpoint(participant, packetSequenceI);
+            journalData = participant.journal.Encode(packetSequenceI, checkpointC);
+            var layout = RtpMidiPayloadBudget.Choose(bufferLen, journalData.Length);
+            if (layout == RtpMidiPayloadBudget.Layout.Overflow)
+            {
+                participant.journalOctetOverflow = true;
+                return;
+            }
+
+            deferJournal = layout == RtpMidiPayloadBudget.Layout.MidiThenJournal;
+            if (deferJournal)
+            {
+                journalData = RtpMidiJournalSection.EncodeEmpty(packetSequenceI);
+            }
+            else
+            {
+                pruneCheckpoint = checkpointC;
+                pruneAfterSend = true;
+            }
+#endif
+
             var dataStream = new MemoryStream();
 
             var rtp = new Rtp
@@ -883,9 +913,12 @@ namespace jp.kshoji.rtpmidi
 
             // increment the sequenceNr
             participant.sendSequenceNrExtended++;
-            var packetSequenceI = participant.sendSequenceNr;
-
+#if ENABLE_RTP_MIDI_JOURNAL
+            packetSequenceI = participant.sendSequenceNr;
             rtp.sequenceNr = packetSequenceI;
+#else
+            rtp.sequenceNr = participant.sendSequenceNr;
+#endif
 
             // write rtp header
             dataStream.Write(new[]
@@ -905,8 +938,6 @@ namespace jp.kshoji.rtpmidi
             }, 0, 12);
 
             // Write rtpMIDI section. Journal is not counted in MaxBufferSize.
-            midiSection = midiSection ?? System.Array.Empty<byte>();
-            var bufferLen = midiSection.Length;
             byte rtpMidiFlags = 0;
             if (bufferLen < 0x0f)
             {
@@ -918,7 +949,7 @@ namespace jp.kshoji.rtpmidi
             }
 
 #if ENABLE_RTP_MIDI_JOURNAL
-            if (midiSection != null && midiSection.Length > 0)
+            if (midiSection.Length > 0)
             {
                 var commands = RtpMidiCommandSection.Parse(midiSection);
                 for (var i = 0; i < commands.Count; i++)
@@ -928,8 +959,6 @@ namespace jp.kshoji.rtpmidi
             }
 
             rtpMidiFlags |= 0x40;
-            var checkpointC = SelectSendCheckpoint(participant, packetSequenceI);
-            var journalData = participant.journal.Encode(packetSequenceI, checkpointC);
 #endif
 
             if (bufferLen < 0x0f)
@@ -951,7 +980,11 @@ namespace jp.kshoji.rtpmidi
             dataStream.Write(journalData, 0, journalData.Length);
             // Journal for I excludes this packet's MIDI; assign pending commands to I after Encode.
             participant.journal.CommitPending(packetSequenceI);
-            participant.journal.PruneBefore(checkpointC);
+            if (pruneAfterSend)
+            {
+                participant.journal.PruneBefore(pruneCheckpoint);
+            }
+
             if (!participant.hasSentRtpMidi)
             {
                 participant.firstSentSequenceExtended = participant.sendSequenceNrExtended;
@@ -959,10 +992,18 @@ namespace jp.kshoji.rtpmidi
 
             participant.hasSentRtpMidi = true;
             participant.lastRtpMidiSendTime = RtpMidiClock.Ticks();
-            if (bufferLen > 0 && ConsumeOutboundMidiDrop())
+            var dropMidi = bufferLen > 0 && ConsumeOutboundMidiDrop();
+            if (!dropMidi)
             {
-                return;
+                dataPort?.Send(dataStream.ToArray(), (int)dataStream.Length, participant.DataEndPoint);
             }
+
+            if (deferJournal)
+            {
+                WriteRtpMidiPacket(participant, System.Array.Empty<byte>());
+            }
+
+            return;
 #endif
 
             dataPort?.Send(dataStream.ToArray(), (int)dataStream.Length, participant.DataEndPoint);
@@ -1629,6 +1670,11 @@ namespace jp.kshoji.rtpmidi
 
         private static bool ShouldDisconnectForJournalOverflow(RtpMidiParticipant participant)
         {
+            if (participant.journalOctetOverflow)
+            {
+                return true;
+            }
+
             if (!participant.hasSentRtpMidi)
             {
                 return false;

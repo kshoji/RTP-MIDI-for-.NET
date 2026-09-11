@@ -5,7 +5,6 @@
     <Nullable>warnings</Nullable>
     <IsPackable>false</IsPackable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <EnableRtpMidiJournal>true</EnableRtpMidiJournal>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,9 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Runtime\Runtime.csproj">
-      <Properties>EnableRtpMidiJournal=$(EnableRtpMidiJournal)</Properties>
-    </ProjectReference>
+    <ProjectReference Include="..\..\Runtime\Runtime.csproj" />
   </ItemGroup>
 
 </Project>

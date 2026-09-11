@@ -19,9 +19,10 @@ jobs:
         dotnet-version: 6.0.x
     - name: Restore dependencies
       run: dotnet restore
+    # Opt-out is a single project so it does not race the solution's Runtime output.
+    - name: Build without recovery journal
+      run: dotnet build Runtime/Runtime.csproj --no-restore -p:EnableRtpMidiJournal=false
     - name: Build
       run: dotnet build --no-restore
-    - name: Build with journaling
-      run: dotnet build --no-restore -p:EnableRtpMidiJournal=true
     - name: Test
-      run: dotnet test --no-build --verbosity normal -p:EnableRtpMidiJournal=true
+      run: dotnet test --no-build --verbosity normal

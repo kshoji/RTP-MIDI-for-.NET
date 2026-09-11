@@ -6,7 +6,7 @@ namespace jp.kshoji.rtpmidi
     /// <summary>
     /// Send-side recovery journal. Record updates history only; Encode is read-only.
     /// Pending commands are assigned a packet sequence when that RTP packet is sent (after Encode for I).
-    /// Checkpoint history is coded as Chapters P, C, M, W, N, E, T, and A.
+    /// Checkpoint history is coded as channel chapters and system chapters D, V, Q, F, and X.
     /// </summary>
     public class RtpMidiJournal
     {
@@ -15,12 +15,14 @@ namespace jp.kshoji.rtpmidi
             public ushort PacketSequence;
             public byte[] Midi;
             public RtpMidiControlJournal.ControlMeta Meta;
+            public int SysExCountAfter;
         }
 
         private readonly List<Entry> committed = new List<Entry>();
         private readonly List<byte[]> pending = new List<byte[]>();
         private readonly int[,] noteRefCount = new int[16, 128];
         private readonly RtpMidiControlState controlState = new RtpMidiControlState();
+        private readonly RtpMidiSystemState systemState = new RtpMidiSystemState();
         private bool hasSessionStart;
         private ushort sessionStartSequence;
 
@@ -73,10 +75,14 @@ namespace jp.kshoji.rtpmidi
             var history = new List<RtpMidiNoteJournal.HistoryItem>(committed.Count);
             for (var i = 0; i < committed.Count; i++)
             {
-                history.Add(new RtpMidiNoteJournal.HistoryItem(committed[i].PacketSequence, committed[i].Midi, committed[i].Meta));
+                history.Add(new RtpMidiNoteJournal.HistoryItem(
+                    committed[i].PacketSequence,
+                    committed[i].Midi,
+                    committed[i].Meta,
+                    committed[i].SysExCountAfter));
             }
 
-            return RtpMidiNoteJournal.Encode(history, noteRefCount, controlState, packetSequenceI, checkpointC);
+            return RtpMidiNoteJournal.Encode(history, noteRefCount, controlState, systemState, packetSequenceI, checkpointC);
         }
 
         /// <summary>
@@ -106,7 +112,14 @@ namespace jp.kshoji.rtpmidi
             foreach (var midi in pending)
             {
                 var meta = controlState.Observe(midi);
-                committed.Add(new Entry { PacketSequence = packetSequence, Midi = midi, Meta = meta });
+                var sysExCountAfter = systemState.Observe(midi);
+                committed.Add(new Entry
+                {
+                    PacketSequence = packetSequence,
+                    Midi = midi,
+                    Meta = meta,
+                    SysExCountAfter = sysExCountAfter,
+                });
                 RtpMidiNoteJournal.ApplyCommitted(noteRefCount, midi);
             }
 

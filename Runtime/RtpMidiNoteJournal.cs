@@ -8,18 +8,20 @@ namespace jp.kshoji.rtpmidi
     /// </summary>
     public readonly struct RecoveredMidi
     {
-        public RecoveredMidi(MidiType type, int channel, int data1, int data2)
+        public RecoveredMidi(MidiType type, int channel, int data1, int data2, byte[] payload = null)
         {
             Type = type;
             Channel = channel;
             Data1 = data1;
             Data2 = data2;
+            Payload = payload;
         }
 
         public MidiType Type { get; }
         public int Channel { get; }
         public int Data1 { get; }
         public int Data2 { get; }
+        public byte[] Payload { get; }
     }
 
     /// <summary>
@@ -45,15 +47,22 @@ namespace jp.kshoji.rtpmidi
             }
 
             public HistoryItem(ushort packetSequence, byte[] midi, RtpMidiControlJournal.ControlMeta meta)
+                : this(packetSequence, midi, meta, 0)
+            {
+            }
+
+            public HistoryItem(ushort packetSequence, byte[] midi, RtpMidiControlJournal.ControlMeta meta, int sysExCountAfter)
             {
                 PacketSequence = packetSequence;
                 Midi = midi;
                 Meta = meta;
+                SysExCountAfter = sysExCountAfter;
             }
 
             public ushort PacketSequence { get; }
             public byte[] Midi { get; }
             public RtpMidiControlJournal.ControlMeta Meta { get; }
+            public int SysExCountAfter { get; }
         }
 
         /// <summary>
@@ -97,12 +106,12 @@ namespace jp.kshoji.rtpmidi
             ushort packetSequenceI,
             ushort checkpointC)
         {
-            return Encode(history, noteRefCount, null, packetSequenceI, checkpointC);
+            return Encode(history, noteRefCount, null, null, packetSequenceI, checkpointC);
         }
 
         /// <summary>
         /// Encodes a recovery journal whose checkpoint history is [C, I).
-        /// Chapter bodies are P, C, M, W, N, E, T, and A.
+        /// Channel chapters are P, C, M, W, N, E, T, and A. System chapters are D, V, Q, F, and X.
         /// </summary>
         public static byte[] Encode(
             IReadOnlyList<HistoryItem> history,
@@ -111,19 +120,47 @@ namespace jp.kshoji.rtpmidi
             ushort packetSequenceI,
             ushort checkpointC)
         {
+            return Encode(history, noteRefCount, controlState, null, packetSequenceI, checkpointC);
+        }
+
+        public static byte[] Encode(
+            IReadOnlyList<HistoryItem> history,
+            int[,] noteRefCount,
+            RtpMidiControlState controlState,
+            RtpMidiSystemState systemState,
+            ushort packetSequenceI,
+            ushort checkpointC)
+        {
             if (history == null || checkpointC == packetSequenceI)
             {
                 return RtpMidiJournalSection.EncodeEmpty(checkpointC);
             }
 
+            var hasSystem = RtpMidiSystemJournal.TryEncode(
+                history,
+                systemState,
+                packetSequenceI,
+                checkpointC,
+                out var system,
+                out var systemS);
             var channels = BuildChannels(history, noteRefCount, controlState, packetSequenceI, checkpointC);
-            if (channels.Count == 0)
+            if (!hasSystem && channels.Count == 0)
             {
                 return RtpMidiJournalSection.EncodeEmpty(checkpointC);
             }
 
             var payload = new List<byte>();
             var topS = true;
+            if (hasSystem)
+            {
+                if (!systemS)
+                {
+                    topS = false;
+                }
+
+                payload.AddRange(system);
+            }
+
             foreach (var channel in channels)
             {
                 if (!channel.S)
@@ -134,8 +171,19 @@ namespace jp.kshoji.rtpmidi
                 payload.AddRange(channel.Bytes);
             }
 
+            var flags = topS ? RtpMidiJournalSection.FlagS : 0;
+            if (hasSystem)
+            {
+                flags |= RtpMidiJournalSection.FlagY;
+            }
+
+            if (channels.Count > 0)
+            {
+                flags |= RtpMidiJournalSection.FlagA | ((channels.Count - 1) & 0x0f);
+            }
+
             var header = new byte[3 + payload.Count];
-            header[0] = (byte)((topS ? RtpMidiJournalSection.FlagS : 0) | RtpMidiJournalSection.FlagA | ((channels.Count - 1) & 0x0f));
+            header[0] = (byte)flags;
             header[1] = (byte)(checkpointC >> 8);
             header[2] = (byte)(checkpointC & 0xff);
             payload.CopyTo(header, 3);
@@ -163,13 +211,10 @@ namespace jp.kshoji.rtpmidi
                     return false;
                 }
 
-                var systemLength = RtpMidiJournalSection.ReadLength10(journal[offset], journal[offset + 1]);
-                if (systemLength < RtpMidiJournalSection.SystemJournalHeaderLength || offset + systemLength > length)
+                if (!RtpMidiSystemJournal.TryRead(journal, ref offset, length, list))
                 {
                     return false;
                 }
-
-                offset += systemLength;
             }
 
             if ((flags & RtpMidiJournalSection.FlagA) != RtpMidiJournalSection.FlagA)

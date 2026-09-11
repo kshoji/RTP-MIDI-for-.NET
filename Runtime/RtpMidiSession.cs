@@ -1617,6 +1617,43 @@ namespace jp.kshoji.rtpmidi
                 case MidiType.PitchBend:
                     rtpMidiEventHandler.OnMidiPitchWheel(deviceId, command.Channel, command.Data1 | (command.Data2 << 7));
                     break;
+                case MidiType.SystemExclusive:
+                    if (command.Payload != null)
+                    {
+                        rtpMidiEventHandler.OnMidiSystemExclusive(deviceId, command.Payload);
+                    }
+
+                    break;
+                case MidiType.TimeCodeQuarterFrame:
+                    rtpMidiEventHandler.OnMidiTimeCodeQuarterFrame(deviceId, command.Data1);
+                    break;
+                case MidiType.SongSelect:
+                    rtpMidiEventHandler.OnMidiSongSelect(deviceId, command.Data1);
+                    break;
+                case MidiType.SongPosition:
+                    rtpMidiEventHandler.OnMidiSongPositionPointer(deviceId, command.Data1 | (command.Data2 << 7));
+                    break;
+                case MidiType.TuneRequest:
+                    rtpMidiEventHandler.OnMidiTuneRequest(deviceId);
+                    break;
+                case MidiType.Clock:
+                    rtpMidiEventHandler.OnMidiTimingClock(deviceId);
+                    break;
+                case MidiType.Start:
+                    rtpMidiEventHandler.OnMidiStart(deviceId);
+                    break;
+                case MidiType.Continue:
+                    rtpMidiEventHandler.OnMidiContinue(deviceId);
+                    break;
+                case MidiType.Stop:
+                    rtpMidiEventHandler.OnMidiStop(deviceId);
+                    break;
+                case MidiType.ActiveSensing:
+                    rtpMidiEventHandler.OnMidiActiveSensing(deviceId);
+                    break;
+                case MidiType.SystemReset:
+                    rtpMidiEventHandler.OnMidiReset(deviceId);
+                    break;
             }
         }
 

@@ -228,9 +228,22 @@ ClientBin/
 !Tests~/**
 !Documentation~/
 !Documentation~/**
+!Samples~/
+!Samples~/**
+!Samples~/**/*.meta
+# Unity editor state created if the package root is opened as a project
+UserSettings/
 # Negation above re-includes build outputs; keep them ignored
 Tests~/**/[Bb]in/
 Tests~/**/[Oo]bj/
+Samples~/**/[Bb]in/
+Samples~/**/[Oo]bj/
+Samples~/**/[Ll]ibrary/
+Samples~/**/[Tt]emp/
+Samples~/**/[Ll]ogs/
+Samples~/**/UserSettings/
+Samples~/**/*.csproj
+Samples~/**/*.sln
 *.dbmdl
 *.dbproj.schemaview
 *.jfm

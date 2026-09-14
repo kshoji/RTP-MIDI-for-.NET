@@ -20,7 +20,8 @@ namespace jp.kshoji.rtpmidi
         private readonly Dictionary<string, string> hostToServiceInstance = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, ushort> hostToControlPort = new Dictionary<string, ushort>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, HashSet<IPAddress>> hostAddresses = new Dictionary<string, HashSet<IPAddress>>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, RtpMidiDiscoveredService> resolvedByDisplayName =
+        // Keyed by fully-qualified service instance so identical Directory names on different hosts can coexist.
+        private readonly Dictionary<string, RtpMidiDiscoveredService> resolvedByServiceInstance =
             new Dictionary<string, RtpMidiDiscoveredService>(StringComparer.OrdinalIgnoreCase);
 
         private ServiceDiscovery serviceDiscovery;
@@ -31,7 +32,9 @@ namespace jp.kshoji.rtpmidi
         private Thread browseThread;
         private volatile bool browseRunning;
         private bool browseHandlersAttached;
+        private bool networkHandlersAttached;
         private bool disposed;
+        private bool readvertising;
 
         /// <summary>
         /// Builds an <c>_apple-midi._udp</c> profile with empty TXT and IPv4 addresses when possible.
@@ -175,6 +178,7 @@ namespace jp.kshoji.rtpmidi
                 advertisedProfile = null;
                 advertisedDisplayName = null;
                 advertisedControlPort = null;
+                DetachNetworkHandlersLocked();
                 serviceDiscovery?.Dispose();
                 serviceDiscovery = null;
             }
@@ -273,7 +277,46 @@ namespace jp.kshoji.rtpmidi
             hostToServiceInstance.Clear();
             hostToControlPort.Clear();
             hostAddresses.Clear();
-            resolvedByDisplayName.Clear();
+            resolvedByServiceInstance.Clear();
+        }
+
+        private void OnNetworkInterfaceDiscovered(object sender, NetworkInterfaceEventArgs e)
+        {
+            string name;
+            int? port;
+            lock (gate)
+            {
+                if (disposed || advertisedProfile == null || readvertising)
+                {
+                    return;
+                }
+
+                name = advertisedDisplayName;
+                port = advertisedControlPort;
+                if (string.IsNullOrEmpty(name) || port == null)
+                {
+                    return;
+                }
+
+                readvertising = true;
+            }
+
+            try
+            {
+                // Refresh A/AAAA records after NIC change without stopping the session.
+                Advertise(name, port.Value);
+            }
+            catch
+            {
+                // Keep previous advertisement if refresh fails.
+            }
+            finally
+            {
+                lock (gate)
+                {
+                    readvertising = false;
+                }
+            }
         }
 
         private void OnServiceInstanceDiscovered(object sender, ServiceInstanceDiscoveryEventArgs args)
@@ -301,14 +344,15 @@ namespace jp.kshoji.rtpmidi
                 return;
             }
 
+            var serviceInstance = args.ServiceInstanceName.ToString();
             var displayName = RtpMidiZeroconfHelpers.GetServiceInstanceDisplayName(args.ServiceInstanceName);
             IRtpMidiServiceDiscoveryListener listener = null;
             var removed = false;
 
             lock (gate)
             {
-                removed = resolvedByDisplayName.Remove(displayName);
-                RemoveHostMappingsForDisplayNameLocked(displayName);
+                removed = resolvedByServiceInstance.Remove(serviceInstance);
+                RemoveHostMappingsForServiceInstanceLocked(serviceInstance);
                 listener = removed ? browseListener : null;
             }
 
@@ -411,7 +455,7 @@ namespace jp.kshoji.rtpmidi
                     }
 
                     // Prefer sticking with IPv4 once chosen; allow upgrade from AAAA -> A.
-                    if (resolvedByDisplayName.TryGetValue(displayName, out var existing))
+                    if (resolvedByServiceInstance.TryGetValue(serviceInstance, out var existing))
                     {
                         var existingIsIpv4 = existing.ControlEndPoint.AddressFamily == AddressFamily.InterNetwork;
                         var preferredIsIpv4 = preferred.AddressFamily == AddressFamily.InterNetwork;
@@ -433,7 +477,7 @@ namespace jp.kshoji.rtpmidi
                         hostKey,
                         new IPEndPoint(preferred, controlPort),
                         resolved);
-                    resolvedByDisplayName[displayName] = appeared;
+                    resolvedByServiceInstance[serviceInstance] = appeared;
                     listener = browseListener;
                 }
 
@@ -451,23 +495,10 @@ namespace jp.kshoji.rtpmidi
             }
         }
 
-        private void RemoveHostMappingsForDisplayNameLocked(string displayName)
+        private void RemoveHostMappingsForServiceInstanceLocked(string serviceInstance)
         {
             var hostsToRemove = hostToServiceInstance
-                .Where(pair =>
-                {
-                    try
-                    {
-                        return string.Equals(
-                            RtpMidiZeroconfHelpers.GetServiceInstanceDisplayName(new DomainName(pair.Value)),
-                            displayName,
-                            StringComparison.OrdinalIgnoreCase);
-                    }
-                    catch
-                    {
-                        return false;
-                    }
-                })
+                .Where(pair => string.Equals(pair.Value, serviceInstance, StringComparison.OrdinalIgnoreCase))
                 .Select(pair => pair.Key)
                 .ToList();
 
@@ -484,7 +515,21 @@ namespace jp.kshoji.rtpmidi
             if (serviceDiscovery == null)
             {
                 serviceDiscovery = new ServiceDiscovery();
+                serviceDiscovery.Mdns.NetworkInterfaceDiscovered += OnNetworkInterfaceDiscovered;
+                networkHandlersAttached = true;
             }
+        }
+
+        private void DetachNetworkHandlersLocked()
+        {
+            if (!networkHandlersAttached || serviceDiscovery?.Mdns == null)
+            {
+                networkHandlersAttached = false;
+                return;
+            }
+
+            serviceDiscovery.Mdns.NetworkInterfaceDiscovered -= OnNetworkInterfaceDiscovered;
+            networkHandlersAttached = false;
         }
 
         private void ThrowIfDisposed()

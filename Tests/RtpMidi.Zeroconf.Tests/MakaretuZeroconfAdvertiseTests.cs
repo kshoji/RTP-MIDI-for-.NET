@@ -72,9 +72,10 @@ namespace jp.kshoji.rtpmidi.tests
         public void Start_AdvertisesViaInjectedZeroconf()
         {
             using var fake = new FakeRtpMidiZeroconf();
+            var port = TestPorts.NextControlPort();
             var server = new RtpMidiServer(
                 "My session",
-                5004,
+                port,
                 new NullConnectionListener(),
                 new NullEventHandler(),
                 fake);
@@ -85,7 +86,7 @@ namespace jp.kshoji.rtpmidi.tests
 
                 Assert.True(fake.IsAdvertising);
                 Assert.Equal("My session", fake.AdvertisedServiceName);
-                Assert.Equal(5004, fake.AdvertisedControlPort);
+                Assert.Equal(port, fake.AdvertisedControlPort);
             }
             finally
             {
@@ -101,7 +102,7 @@ namespace jp.kshoji.rtpmidi.tests
             using var fake = new FakeRtpMidiZeroconf();
             var server = new RtpMidiServer(
                 "My session",
-                5004,
+                TestPorts.NextControlPort(),
                 new NullConnectionListener(),
                 new NullEventHandler(),
                 fake,
@@ -124,7 +125,7 @@ namespace jp.kshoji.rtpmidi.tests
             var throwing = new ThrowingAdvertiseZeroconf();
             var server = new RtpMidiServer(
                 "My session",
-                5004,
+                TestPorts.NextControlPort(),
                 new NullConnectionListener(),
                 new NullEventHandler(),
                 throwing);
@@ -146,7 +147,7 @@ namespace jp.kshoji.rtpmidi.tests
             using var fake = new FakeRtpMidiZeroconf();
             var server = new RtpMidiServer(
                 "My session",
-                5004,
+                TestPorts.NextControlPort(),
                 new NullConnectionListener(),
                 new NullEventHandler(),
                 fake,

@@ -33,4 +33,6 @@ DNS-SD advertise and discovery use vendored [Makaretu.Dns](https://github.com/ri
 
 Sources live under `Runtime/Zeroconf/Vendor/`. Full notices: [Documentation~/THIRD-PARTY.md](Documentation~/THIRD-PARTY.md).
 
-Advertise smoke test: [Tools/ZeroconfAdvertisePrototype](Tools/ZeroconfAdvertisePrototype/README.md).
+Advertise smoke test: [Tools/ZeroconfAdvertisePrototype](Tools/ZeroconfAdvertisePrototype/README.md).  
+Session sample (advertise + browse): [Tools/ZeroconfSessionSample](Tools/ZeroconfSessionSample/README.md).  
+Manual interop checklist: [Documentation~/Zeroconf-Interop-Checklist.md](Documentation~/Zeroconf-Interop-Checklist.md).

@@ -23,6 +23,10 @@ namespace jp.kshoji.rtpmidi
         NoResponseFromConnectionRequestException,
         SendPacketsDropped,
         ReceivedPacketsDropped,
+        /// <summary>
+        /// Zeroconf advertise or browse failed (session listen continues).
+        /// </summary>
+        ZeroconfException,
     }
 
     /// <summary>

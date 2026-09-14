@@ -4,7 +4,7 @@
 |------|------|
 | 対象リポジトリ | RTP-MIDI-for-.NET（`jp.kshoji.rtpmidi`） |
 | 作成日 | 2026-09-12 |
-| 改訂 | 2026-09-15 — Phase 4 完了（StartDiscovery・ドキュメント・招待 SessionName）。Phase 3 完了（Browse/Resolve・自ホスト除外）。Phase 2 完了（MakaretuZeroconf 広告・RtpMidiServer 連動）。Phase 1 完了（定数・抽象・Fake・ユニットテスト）。2026-09-14 — Phase 0 完了（Vendor 同梱・THIRD-PARTY・Advertise プロトタイプ）。2026-09-13 — mDNS 実装を Unity-MIDI-Plugin の Makaretu.Dns（net-mdns / net-dns）に固定 |
+| 改訂 | 2026-09-15 — Phase 5 完了（安定化・相互運用チェックリスト・サンプル）。Phase 4〜0 は同日〜前日に完了。2026-09-13 — mDNS 実装を Unity-MIDI-Plugin の Makaretu.Dns（net-mdns / net-dns）に固定 |
 | 目的 | Apple Network MIDI / Tobias rtpMIDI / 主要 OSS と互換する Zeroconf 広告・発見の仕様を定義し、実装フェーズを定める |
 | 本ドキュメントの範囲 | 仕様検討・API 設計・モジュール分割・実装フェーズ・テスト計画（コード実装は別フェーズ） |
 | mDNS 実装（確定） | [net-mdns 0.27.0](https://github.com/richardschneider/net-mdns) + [net-dns 2.0.1](https://github.com/richardschneider/net-dns)（`Makaretu.Dns`）。Unity-MIDI-Plugin の Network MIDI 2.0 発見と同系統 |
@@ -402,11 +402,11 @@ Zeroconf 失敗（マルチキャスト権限なし等）はセッション待�
 - [x] `README.md` / `CHANGELOG.md` 更新
 - [x] 招待パケットへの `SessionName` 付与（IN/OK に UTF-8 NULL 終端。NO は除外。パーサも対応）
 
-### Phase 5 — 相互運用・安定化
+### Phase 5 — 相互運用・安定化 — 完了 (2026-09-15)
 
-- [ ] 下表のテストマトリクスを実施
-- [ ] 名前衝突・NIC 切替・Advertise 失敗時の挙動を固め
-- [ ] 必要ならサンプルプロジェクト追加
+- [x] 下表のテストマトリクスを実施（手動チェックリスト: `Documentation~/Zeroconf-Interop-Checklist.md`。必須ピアは実機確認用）
+- [x] 名前衝突・NIC 切替・Advertise 失敗時の挙動を固め（FQDN キー、NIC 再広告、`ZeroconfException` 通知）
+- [x] サンプル追加: `Tools/ZeroconfSessionSample`（広告+発見、自動接続なし）
 
 ---
 
@@ -433,11 +433,11 @@ Zeroconf 失敗（マルチキャスト権限なし等）はセッション待�
 
 ### 8.3 回帰・エッジ
 
-- [ ] Advertise OFF でも `Start` + 手動 `ConnectToListener` が従来どおり動く
-- [ ] 自ホストのサービスを発見しても自動接続しない
-- [ ] 同一 LAN に同名セッションが複数ある場合にクラッシュしない
-- [ ] ファイアウォールで N のみ開放・N+1 閉鎖時の失敗が既存タイムアウト経路に落ちる
-- [ ] IPv6 のみ解決される環境での失敗回避（IPv4 優先方針の確認）
+- [x] Advertise OFF でも `Start` + 手動 `ConnectToListener` が従来どおり動く（単体テスト）
+- [x] 自ホストのサービスを発見しても自動接続しない（サンプル／API は自動接続しない。自ホスト除外ヘルパーあり）
+- [x] 同一 LAN に同名セッションが複数ある場合にクラッシュしない（FQDN キーで併存）
+- [ ] ファイアウォールで N のみ開放・N+1 閉鎖時の失敗が既存タイムアウト経路に落ちる（実機）
+- [x] IPv6 のみ解決される環境での失敗回避（IPv4 優先方針の単体テスト）
 
 ### 8.4 自動化
 

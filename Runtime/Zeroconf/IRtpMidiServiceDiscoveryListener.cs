@@ -15,7 +15,10 @@ namespace jp.kshoji.rtpmidi
         /// <summary>
         /// Called when a previously advertised service disappears.
         /// </summary>
-        /// <param name="serviceName">DNS-SD service instance name.</param>
+        /// <param name="serviceName">
+        /// DNS-SD service instance display name (may not be unique across hosts;
+        /// correlate with <see cref="RtpMidiDiscoveredService.ControlEndPoint"/> from Appeared).
+        /// </param>
         void OnServiceDisappeared(string serviceName);
     }
 }

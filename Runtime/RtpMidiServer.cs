@@ -33,6 +33,7 @@ namespace jp.kshoji.rtpmidi
         private readonly bool advertiseOnStart;
         private IRtpMidiZeroconf zeroconf;
         private bool ownsZeroconf;
+        private IRtpMidiExceptionListener exceptionListener;
 
         /// <summary>
         /// Obtains the name of session, and ssid from deviceId
@@ -43,6 +44,16 @@ namespace jp.kshoji.rtpmidi
         {
             var participant = session.GetParticipantFromDeviceId(deviceId);
             return participant == null ? null : $"{participant.sessionName},${participant.ssrc}";
+        }
+
+        /// <summary>
+        /// Sets an exception listener for session and Zeroconf failures.
+        /// </summary>
+        /// <param name="listener">the exception callback</param>
+        public void SetRtpMidiExceptionListener(IRtpMidiExceptionListener listener)
+        {
+            exceptionListener = listener;
+            session.SetRtpMidiExceptionListener(listener);
         }
 
         /// <summary>
@@ -103,7 +114,7 @@ namespace jp.kshoji.rtpmidi
             }
             catch
             {
-                // Zeroconf browse failure must not prevent manual ConnectToListener.
+                exceptionListener?.OnError(RtpMidiExceptionKind.ZeroconfException);
             }
         }
 
@@ -170,7 +181,7 @@ namespace jp.kshoji.rtpmidi
             }
             catch
             {
-                // Zeroconf failure must not prevent manual ConnectToListener / session listen.
+                exceptionListener?.OnError(RtpMidiExceptionKind.ZeroconfException);
             }
         }
 

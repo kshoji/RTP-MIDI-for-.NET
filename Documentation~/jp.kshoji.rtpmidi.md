@@ -4,7 +4,9 @@
 
 mDNS / DNS-SD dependencies are vendored under `Runtime/Zeroconf/Vendor/` (Makaretu.Dns). See [THIRD-PARTY.md](THIRD-PARTY.md) for licenses and versions.
 
-Optional smoke test: [Tools/ZeroconfAdvertisePrototype](../Tools/ZeroconfAdvertisePrototype/README.md).
+Optional smoke test: [Tools/ZeroconfAdvertisePrototype](../Tools/ZeroconfAdvertisePrototype/README.md).  
+Session sample: [Tools/ZeroconfSessionSample](../Tools/ZeroconfSessionSample/README.md).  
+Interop checklist: [Zeroconf-Interop-Checklist.md](Zeroconf-Interop-Checklist.md).
 
 ## Use this library with Unity
 At first, setup the library to Unity Project.

@@ -4,7 +4,7 @@
 |------|------|
 | 対象リポジトリ | RTP-MIDI-for-.NET（`jp.kshoji.rtpmidi`） |
 | 作成日 | 2026-09-12 |
-| 改訂 | 2026-09-15 — Phase 3 完了（Browse/Resolve・自ホスト除外）。Phase 2 完了（MakaretuZeroconf 広告・RtpMidiServer 連動）。Phase 1 完了（定数・抽象・Fake・ユニットテスト）。2026-09-14 — Phase 0 完了（Vendor 同梱・THIRD-PARTY・Advertise プロトタイプ）。2026-09-13 — mDNS 実装を Unity-MIDI-Plugin の Makaretu.Dns（net-mdns / net-dns）に固定 |
+| 改訂 | 2026-09-15 — Phase 4 完了（StartDiscovery・ドキュメント・招待 SessionName）。Phase 3 完了（Browse/Resolve・自ホスト除外）。Phase 2 完了（MakaretuZeroconf 広告・RtpMidiServer 連動）。Phase 1 完了（定数・抽象・Fake・ユニットテスト）。2026-09-14 — Phase 0 完了（Vendor 同梱・THIRD-PARTY・Advertise プロトタイプ）。2026-09-13 — mDNS 実装を Unity-MIDI-Plugin の Makaretu.Dns（net-mdns / net-dns）に固定 |
 | 目的 | Apple Network MIDI / Tobias rtpMIDI / 主要 OSS と互換する Zeroconf 広告・発見の仕様を定義し、実装フェーズを定める |
 | 本ドキュメントの範囲 | 仕様検討・API 設計・モジュール分割・実装フェーズ・テスト計画（コード実装は別フェーズ） |
 | mDNS 実装（確定） | [net-mdns 0.27.0](https://github.com/richardschneider/net-mdns) + [net-dns 2.0.1](https://github.com/richardschneider/net-dns)（`Makaretu.Dns`）。Unity-MIDI-Plugin の Network MIDI 2.0 発見と同系統 |
@@ -395,12 +395,12 @@ Zeroconf 失敗（マルチキャスト権限なし等）はセッション待�
 - [x] 自ホスト除外（表示名+制御ポート、または自ポート+自ホスト IP）
 - [x] 解決結果を `IPEndPoint`（制御）に正規化（IPv4 優先）
 
-### Phase 4 — API 統合とドキュメント
+### Phase 4 — API 統合とドキュメント — 完了 (2026-09-15)
 
-- [ ] `RtpMidiServer` 公開 API 追加
-- [ ] `Documentation~/jp.kshoji.rtpmidi.md` に広告・発見の例を追加
-- [ ] `README.md` / `CHANGELOG.md` 更新
-- [ ]（推奨）招待パケットへの `SessionName` 付与
+- [x] `RtpMidiServer` 公開 API 追加（`StartDiscovery` / `StopDiscovery`）
+- [x] `Documentation~/jp.kshoji.rtpmidi.md` に広告・発見の例を追加
+- [x] `README.md` / `CHANGELOG.md` 更新
+- [x] 招待パケットへの `SessionName` 付与（IN/OK に UTF-8 NULL 終端。NO は除外。パーサも対応）
 
 ### Phase 5 — 相互運用・安定化
 
@@ -441,7 +441,7 @@ Zeroconf 失敗（マルチキャスト権限なし等）はセッション待�
 
 ### 8.4 自動化
 
-現状テストプロジェクトなし。Phase 1 でフェイクベースのユニットテストプロジェクト追加を推奨。実機相互運用は CI では困難なため、手動チェックリストとして本節を維持する。
+`Tests/RtpMidi.Zeroconf.Tests` でフェイクベースのユニットテストを実施。実機相互運用は CI では困難なため、手動チェックリストとして本節を維持する。
 
 ---
 

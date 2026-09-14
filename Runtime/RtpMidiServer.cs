@@ -85,6 +85,44 @@ namespace jp.kshoji.rtpmidi
         }
 
         /// <summary>
+        /// Starts browsing for remote <c>_apple-midi._udp</c> sessions.
+        /// Independent of <see cref="Start"/> advertise; failures do not stop the session.
+        /// </summary>
+        /// <param name="listener">Discovery callbacks (Appeared / Disappeared).</param>
+        public void StartDiscovery(IRtpMidiServiceDiscoveryListener listener)
+        {
+            if (listener == null)
+            {
+                throw new System.ArgumentNullException(nameof(listener));
+            }
+
+            try
+            {
+                EnsureZeroconf();
+                zeroconf.StartBrowse(listener);
+            }
+            catch
+            {
+                // Zeroconf browse failure must not prevent manual ConnectToListener.
+            }
+        }
+
+        /// <summary>
+        /// Stops browsing for remote sessions. Does not withdraw local advertisement.
+        /// </summary>
+        public void StopDiscovery()
+        {
+            try
+            {
+                zeroconf?.StopBrowse();
+            }
+            catch
+            {
+                // Best-effort browse stop.
+            }
+        }
+
+        /// <summary>
         /// Starts the service thread
         /// </summary>
         public void Start()

@@ -140,6 +140,48 @@ namespace jp.kshoji.rtpmidi.tests
             }
         }
 
+        [Fact]
+        public void StartDiscovery_UsesInjectedZeroconf()
+        {
+            using var fake = new FakeRtpMidiZeroconf();
+            var server = new RtpMidiServer(
+                "My session",
+                5004,
+                new NullConnectionListener(),
+                new NullEventHandler(),
+                fake,
+                advertiseOnStart: false);
+            var listener = new RecordingDiscoveryListener();
+
+            try
+            {
+                server.StartDiscovery(listener);
+                Assert.True(fake.IsBrowsing);
+
+                fake.Publish("Remote", "remote.local", new IPEndPoint(IPAddress.Loopback, 5006));
+                Assert.Single(listener.Appeared);
+                Assert.Equal(5006, listener.Appeared[0].ControlEndPoint.Port);
+
+                server.StopDiscovery();
+                Assert.False(fake.IsBrowsing);
+            }
+            finally
+            {
+                server.Stop();
+            }
+        }
+
+        private sealed class RecordingDiscoveryListener : IRtpMidiServiceDiscoveryListener
+        {
+            public List<RtpMidiDiscoveredService> Appeared { get; } = new();
+
+            public void OnServiceAppeared(RtpMidiDiscoveredService service) => Appeared.Add(service);
+
+            public void OnServiceDisappeared(string serviceName)
+            {
+            }
+        }
+
         private sealed class NullConnectionListener : IRtpMidiDeviceConnectionListener
         {
             public void OnRtpMidiDeviceAttached(string deviceId)

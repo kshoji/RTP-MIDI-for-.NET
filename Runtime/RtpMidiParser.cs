@@ -798,20 +798,15 @@ namespace jp.kshoji.rtpmidi
                 {
                     return ParserResult.UnexpectedData;
                 }
-                
-                // parse session name(remain bytes)
-                var sessionName = new byte[buffer.Length - 16];
-                Array.Copy(buffer, 16, sessionName, 0, buffer.Length - 16);
 
-                // parse invitation(8 bytes)
+                var sessionName = ParseTrailingSessionName(buffer, 16, out var consumed);
                 var invitation = new RtpMidiInvitation(
                     buffer[8] << 24 | buffer[9] << 16 | buffer[10] << 8 | buffer[11],
                     buffer[12] << 24 | buffer[13] << 16 | buffer[14] << 8 | buffer[15],
-                    Encoding.Default.GetString(sessionName)
+                    sessionName
                 );
 
-                // consume all the bytes that made up this message
-                for (var i = 0; i < 16; i++)
+                for (var i = 0; i < consumed; i++)
                 {
                     bufferData.RemoveFirst();
                 }
@@ -912,19 +907,17 @@ namespace jp.kshoji.rtpmidi
                     return ParserResult.UnexpectedData;
                 }
 
-                // parse session name(remain bytes)
-                var sessionName = new byte[buffer.Length - 16];
-                Array.Copy(buffer, 16, sessionName, 0, buffer.Length - 16);
-
-                // parse invitation(8 bytes)
+                var sessionName = ParseTrailingSessionName(buffer, 16, out var consumed);
                 var invitationAccepted = new RtpMidiInvitationAccepted(
                     buffer[8] << 24 | buffer[9] << 16 | buffer[10] << 8 | buffer[11],
                     buffer[12] << 24 | buffer[13] << 16 | buffer[14] << 8 | buffer[15],
-                    Encoding.Default.GetString(sessionName)
+                    sessionName
                 );
 
-                // consume all the bytes that made up this message
-                bufferData.Clear();
+                for (var i = 0; i < consumed; i++)
+                {
+                    bufferData.RemoveFirst();
+                }
 
                 session.ReceivedInvitationAccepted(invitationAccepted, portType);
 
@@ -942,19 +935,17 @@ namespace jp.kshoji.rtpmidi
                     return ParserResult.UnexpectedData;
                 }
 
-                // parse session name(remain bytes)
-                var sessionName = new byte[buffer.Length - 16];
-                Array.Copy(buffer, 16, sessionName, 0, buffer.Length - 16);
-
-                // parse invitation(8 bytes)
+                // Rejected packets omit the name field per AppleMIDI.
                 var invitationRejected = new RtpMidiInvitationRejected(
                     buffer[8] << 24 | buffer[9] << 16 | buffer[10] << 8 | buffer[11],
                     buffer[12] << 24 | buffer[13] << 16 | buffer[14] << 8 | buffer[15],
-                    Encoding.Default.GetString(sessionName)
+                    string.Empty
                 );
 
-                // consume all the bytes that made up this message
-                bufferData.Clear();
+                for (var i = 0; i < 16; i++)
+                {
+                    bufferData.RemoveFirst();
+                }
 
                 session.ReceivedInvitationRejected(invitationRejected);
 
@@ -984,6 +975,37 @@ namespace jp.kshoji.rtpmidi
             }
 
             return ParserResult.UnexpectedData;
+        }
+
+        /// <summary>
+        /// Parses an optional UTF-8 NULL-terminated session name after the fixed AppleMIDI header.
+        /// </summary>
+        /// <param name="buffer">Full command buffer.</param>
+        /// <param name="nameOffset">Offset where the name begins (typically 16).</param>
+        /// <param name="consumed">Total bytes to remove from the stream (header + name + optional NUL).</param>
+        private static string ParseTrailingSessionName(byte[] buffer, int nameOffset, out int consumed)
+        {
+            if (buffer.Length <= nameOffset)
+            {
+                consumed = nameOffset;
+                return string.Empty;
+            }
+
+            var nameLength = 0;
+            while (nameOffset + nameLength < buffer.Length && buffer[nameOffset + nameLength] != 0)
+            {
+                nameLength++;
+            }
+
+            consumed = nameOffset + nameLength;
+            if (nameOffset + nameLength < buffer.Length && buffer[nameOffset + nameLength] == 0)
+            {
+                consumed++;
+            }
+
+            return nameLength == 0
+                ? string.Empty
+                : Encoding.UTF8.GetString(buffer, nameOffset, nameLength);
         }
     }
 }

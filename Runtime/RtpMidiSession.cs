@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using Random = System.Random;
 
 namespace jp.kshoji.rtpmidi
@@ -717,7 +718,31 @@ namespace jp.kshoji.rtpmidi
                 }
                 , 0, 8);
 
+            // AppleMIDI: UTF-8 NULL-terminated name on Invitation / Accepted; omit on Rejected.
+            if (ShouldIncludeSessionName(command) && !string.IsNullOrEmpty(invitation.SessionName))
+            {
+                var nameBytes = Encoding.UTF8.GetBytes(invitation.SessionName);
+                dataStream.Write(nameBytes, 0, nameBytes.Length);
+                dataStream.WriteByte(0);
+            }
+
             udpClient?.Send(dataStream.ToArray(), (int)dataStream.Length, endPoint);
+        }
+
+        private static bool ShouldIncludeSessionName(byte[] command)
+        {
+            return IsCommand(command, RtpMidiConstants.Invitation)
+                   || IsCommand(command, RtpMidiConstants.InvitationAccepted);
+        }
+
+        private static bool IsCommand(byte[] command, byte[] expected)
+        {
+            return command != null
+                   && expected != null
+                   && command.Length >= 2
+                   && expected.Length >= 2
+                   && command[0] == expected[0]
+                   && command[1] == expected[1];
         }
 
         private void WriteReceiverFeedback(IPEndPoint endPoint, RtpMidiReceiverFeedback receiverFeedback)

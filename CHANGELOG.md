@@ -5,6 +5,7 @@ All notable changes to this package will be documented in this file.
 
 ### Added
 
+* Zeroconf Phase 4: `RtpMidiServer.StartDiscovery` / `StopDiscovery`, docs/README updates, and AppleMIDI invitation `SessionName` (UTF-8 NUL-terminated on IN/OK).
 * Zeroconf Phase 3: `MakaretuZeroconf` browse/resolve for `_apple-midi._udp` (SRV→A/AAAA, IPv4 preferred, self-exclusion) with `RtpMidiZeroconfHelpers`.
 * Zeroconf Phase 2: `MakaretuZeroconf` advertise/withdraw (empty TXT, IPv4 preferred) wired into `RtpMidiServer.Start` / `Stop` (`advertiseOnStart`, optional `IRtpMidiZeroconf` injection).
 * Zeroconf Phase 1: `RtpMidiDnsSdConstants`, `RtpMidiDiscoveredService`, `IRtpMidiServiceDiscoveryListener`, `IRtpMidiZeroconf`, and in-memory `FakeRtpMidiZeroconf` under `Runtime/Zeroconf/`.

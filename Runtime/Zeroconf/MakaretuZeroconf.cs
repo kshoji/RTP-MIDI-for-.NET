@@ -3,30 +3,39 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using Makaretu.Dns;
 
 namespace jp.kshoji.rtpmidi
 {
     /// <summary>
     /// Makaretu.Dns (net-mdns) implementation of <see cref="IRtpMidiZeroconf"/>.
-    /// Phase 2 covers advertise / withdraw; browse / resolve follows in Phase 3.
     /// </summary>
     public sealed class MakaretuZeroconf : IRtpMidiZeroconf
     {
+        private const int BrowseIntervalMilliseconds = 5000;
+
         private readonly object gate = new object();
+        private readonly object browseWait = new object();
+        private readonly Dictionary<string, string> hostToServiceInstance = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, ushort> hostToControlPort = new Dictionary<string, ushort>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, HashSet<IPAddress>> hostAddresses = new Dictionary<string, HashSet<IPAddress>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, RtpMidiDiscoveredService> resolvedByDisplayName =
+            new Dictionary<string, RtpMidiDiscoveredService>(StringComparer.OrdinalIgnoreCase);
+
         private ServiceDiscovery serviceDiscovery;
         private ServiceProfile advertisedProfile;
+        private string advertisedDisplayName;
+        private int? advertisedControlPort;
+        private IRtpMidiServiceDiscoveryListener browseListener;
+        private Thread browseThread;
+        private volatile bool browseRunning;
+        private bool browseHandlersAttached;
         private bool disposed;
 
         /// <summary>
         /// Builds an <c>_apple-midi._udp</c> profile with empty TXT and IPv4 addresses when possible.
         /// </summary>
-        /// <param name="serviceInstanceName">DNS-SD instance name.</param>
-        /// <param name="controlPort">AppleMIDI control port.</param>
-        /// <param name="addresses">
-        /// Optional address list. When null, IPv4 addresses from
-        /// <see cref="MulticastService.GetLinkLocalAddresses"/> are used.
-        /// </param>
         public static ServiceProfile CreateAppleMidiServiceProfile(
             string serviceInstanceName,
             ushort controlPort,
@@ -74,6 +83,8 @@ namespace jp.kshoji.rtpmidi
                 }
 
                 advertisedProfile = CreateAppleMidiServiceProfile(serviceInstanceName, (ushort)controlPort);
+                advertisedDisplayName = serviceInstanceName;
+                advertisedControlPort = controlPort;
                 serviceDiscovery.Advertise(advertisedProfile);
             }
         }
@@ -87,11 +98,15 @@ namespace jp.kshoji.rtpmidi
             {
                 if (serviceDiscovery == null || advertisedProfile == null)
                 {
+                    advertisedDisplayName = null;
+                    advertisedControlPort = null;
                     return;
                 }
 
                 serviceDiscovery.Unadvertise(advertisedProfile);
                 advertisedProfile = null;
+                advertisedDisplayName = null;
+                advertisedControlPort = null;
             }
         }
 
@@ -99,19 +114,43 @@ namespace jp.kshoji.rtpmidi
         public void StartBrowse(IRtpMidiServiceDiscoveryListener listener)
         {
             ThrowIfDisposed();
-            throw new NotSupportedException("Browse/resolve is not implemented yet (Phase 3).");
+
+            if (listener == null)
+            {
+                throw new ArgumentNullException(nameof(listener));
+            }
+
+            StopBrowse();
+
+            lock (gate)
+            {
+                EnsureServiceDiscoveryLocked();
+                browseListener = listener;
+                AttachBrowseHandlersLocked();
+                ClearResolveStateLocked();
+            }
+
+            browseRunning = true;
+            browseThread = new Thread(BrowseLoop)
+            {
+                IsBackground = true,
+                Name = "RtpMidi-MakaretuZeroconf-Browse"
+            };
+            browseThread.Start();
         }
 
         /// <inheritdoc />
         public void StopBrowse()
         {
             ThrowIfDisposed();
-            // No-op until Phase 3.
+            StopBrowseCore();
         }
 
         /// <inheritdoc />
         public void Dispose()
         {
+            StopBrowseCore();
+
             lock (gate)
             {
                 if (disposed)
@@ -134,8 +173,309 @@ namespace jp.kshoji.rtpmidi
                 }
 
                 advertisedProfile = null;
+                advertisedDisplayName = null;
+                advertisedControlPort = null;
                 serviceDiscovery?.Dispose();
                 serviceDiscovery = null;
+            }
+        }
+
+        private void StopBrowseCore()
+        {
+            browseRunning = false;
+            lock (browseWait)
+            {
+                Monitor.PulseAll(browseWait);
+            }
+
+            var thread = browseThread;
+            browseThread = null;
+            if (thread != null && thread.IsAlive && thread != Thread.CurrentThread)
+            {
+                try
+                {
+                    thread.Join(1000);
+                }
+                catch
+                {
+                    // Ignore join failures on shutdown.
+                }
+            }
+
+            lock (gate)
+            {
+                DetachBrowseHandlersLocked();
+                browseListener = null;
+                ClearResolveStateLocked();
+            }
+        }
+
+        private void BrowseLoop()
+        {
+            while (browseRunning)
+            {
+                try
+                {
+                    ServiceDiscovery discovery;
+                    lock (gate)
+                    {
+                        discovery = serviceDiscovery;
+                    }
+
+                    discovery?.QueryServiceInstances(RtpMidiDnsSdConstants.ServiceType);
+                }
+                catch
+                {
+                    // Keep browsing despite transient mDNS errors.
+                }
+
+                lock (browseWait)
+                {
+                    if (!browseRunning)
+                    {
+                        break;
+                    }
+
+                    Monitor.Wait(browseWait, BrowseIntervalMilliseconds);
+                }
+            }
+        }
+
+        private void AttachBrowseHandlersLocked()
+        {
+            if (browseHandlersAttached || serviceDiscovery == null)
+            {
+                return;
+            }
+
+            serviceDiscovery.ServiceInstanceDiscovered += OnServiceInstanceDiscovered;
+            serviceDiscovery.ServiceInstanceShutdown += OnServiceInstanceShutdown;
+            serviceDiscovery.Mdns.AnswerReceived += OnAnswerReceived;
+            browseHandlersAttached = true;
+        }
+
+        private void DetachBrowseHandlersLocked()
+        {
+            if (!browseHandlersAttached || serviceDiscovery == null)
+            {
+                browseHandlersAttached = false;
+                return;
+            }
+
+            serviceDiscovery.ServiceInstanceDiscovered -= OnServiceInstanceDiscovered;
+            serviceDiscovery.ServiceInstanceShutdown -= OnServiceInstanceShutdown;
+            serviceDiscovery.Mdns.AnswerReceived -= OnAnswerReceived;
+            browseHandlersAttached = false;
+        }
+
+        private void ClearResolveStateLocked()
+        {
+            hostToServiceInstance.Clear();
+            hostToControlPort.Clear();
+            hostAddresses.Clear();
+            resolvedByDisplayName.Clear();
+        }
+
+        private void OnServiceInstanceDiscovered(object sender, ServiceInstanceDiscoveryEventArgs args)
+        {
+            if (args?.ServiceInstanceName == null
+                || !RtpMidiZeroconfHelpers.IsAppleMidiServiceInstance(args.ServiceInstanceName.ToString()))
+            {
+                return;
+            }
+
+            ServiceDiscovery discovery;
+            lock (gate)
+            {
+                discovery = serviceDiscovery;
+            }
+
+            discovery?.Mdns.SendQuery(args.ServiceInstanceName, type: DnsType.SRV);
+        }
+
+        private void OnServiceInstanceShutdown(object sender, ServiceInstanceShutdownEventArgs args)
+        {
+            if (args?.ServiceInstanceName == null
+                || !RtpMidiZeroconfHelpers.IsAppleMidiServiceInstance(args.ServiceInstanceName.ToString()))
+            {
+                return;
+            }
+
+            var displayName = RtpMidiZeroconfHelpers.GetServiceInstanceDisplayName(args.ServiceInstanceName);
+            IRtpMidiServiceDiscoveryListener listener = null;
+            var removed = false;
+
+            lock (gate)
+            {
+                removed = resolvedByDisplayName.Remove(displayName);
+                RemoveHostMappingsForDisplayNameLocked(displayName);
+                listener = removed ? browseListener : null;
+            }
+
+            if (removed)
+            {
+                try
+                {
+                    listener?.OnServiceDisappeared(displayName);
+                }
+                catch
+                {
+                    // Listener exceptions must not break discovery.
+                }
+            }
+        }
+
+        private void OnAnswerReceived(object sender, MessageEventArgs e)
+        {
+            if (e?.Message == null)
+            {
+                return;
+            }
+
+            ProcessSrvRecords(e.Message);
+            ProcessAddressRecords(e.Message);
+        }
+
+        private void ProcessSrvRecords(Message message)
+        {
+            foreach (var server in message.Answers.OfType<SRVRecord>())
+            {
+                if (server?.Name == null || server.Target == null
+                    || !RtpMidiZeroconfHelpers.IsAppleMidiServiceInstance(server.Name.ToString()))
+                {
+                    continue;
+                }
+
+                var hostKey = server.Target.ToString();
+                var serviceInstance = server.Name.ToString();
+
+                ServiceDiscovery discovery;
+                lock (gate)
+                {
+                    hostToServiceInstance[hostKey] = serviceInstance;
+                    hostToControlPort[hostKey] = server.Port;
+                    discovery = serviceDiscovery;
+                }
+
+                // Prefer A; still query AAAA as fallback when no IPv4 arrives.
+                discovery?.Mdns.SendQuery(server.Target, type: DnsType.A);
+                discovery?.Mdns.SendQuery(server.Target, type: DnsType.AAAA);
+            }
+        }
+
+        private void ProcessAddressRecords(Message message)
+        {
+            foreach (var addressRecord in message.Answers.OfType<AddressRecord>())
+            {
+                if (addressRecord?.Name == null || addressRecord.Address == null)
+                {
+                    continue;
+                }
+
+                var hostKey = addressRecord.Name.ToString();
+                IRtpMidiServiceDiscoveryListener listener = null;
+                RtpMidiDiscoveredService appeared = null;
+
+                lock (gate)
+                {
+                    if (!hostToServiceInstance.TryGetValue(hostKey, out var serviceInstance)
+                        || !hostToControlPort.TryGetValue(hostKey, out var controlPort))
+                    {
+                        continue;
+                    }
+
+                    if (!hostAddresses.TryGetValue(hostKey, out var addresses))
+                    {
+                        addresses = new HashSet<IPAddress>();
+                        hostAddresses[hostKey] = addresses;
+                    }
+
+                    addresses.Add(addressRecord.Address);
+
+                    var displayName = RtpMidiZeroconfHelpers.GetServiceInstanceDisplayName(new DomainName(serviceInstance));
+                    if (RtpMidiZeroconfHelpers.IsSelfAdvertisement(
+                            displayName,
+                            controlPort,
+                            addressRecord.Address,
+                            advertisedDisplayName,
+                            advertisedControlPort,
+                            MulticastService.GetIPAddresses()))
+                    {
+                        continue;
+                    }
+
+                    var preferred = RtpMidiZeroconfHelpers.SelectPreferredAddress(addresses);
+                    if (preferred == null)
+                    {
+                        continue;
+                    }
+
+                    // Prefer sticking with IPv4 once chosen; allow upgrade from AAAA -> A.
+                    if (resolvedByDisplayName.TryGetValue(displayName, out var existing))
+                    {
+                        var existingIsIpv4 = existing.ControlEndPoint.AddressFamily == AddressFamily.InterNetwork;
+                        var preferredIsIpv4 = preferred.AddressFamily == AddressFamily.InterNetwork;
+                        if (existingIsIpv4 && !preferredIsIpv4)
+                        {
+                            continue;
+                        }
+
+                        if (existing.ControlEndPoint.Address.Equals(preferred)
+                            && existing.ControlEndPoint.Port == controlPort)
+                        {
+                            continue;
+                        }
+                    }
+
+                    var resolved = addresses.ToArray();
+                    appeared = new RtpMidiDiscoveredService(
+                        displayName,
+                        hostKey,
+                        new IPEndPoint(preferred, controlPort),
+                        resolved);
+                    resolvedByDisplayName[displayName] = appeared;
+                    listener = browseListener;
+                }
+
+                if (appeared != null)
+                {
+                    try
+                    {
+                        listener?.OnServiceAppeared(appeared);
+                    }
+                    catch
+                    {
+                        // Listener exceptions must not break discovery.
+                    }
+                }
+            }
+        }
+
+        private void RemoveHostMappingsForDisplayNameLocked(string displayName)
+        {
+            var hostsToRemove = hostToServiceInstance
+                .Where(pair =>
+                {
+                    try
+                    {
+                        return string.Equals(
+                            RtpMidiZeroconfHelpers.GetServiceInstanceDisplayName(new DomainName(pair.Value)),
+                            displayName,
+                            StringComparison.OrdinalIgnoreCase);
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                })
+                .Select(pair => pair.Key)
+                .ToList();
+
+            foreach (var host in hostsToRemove)
+            {
+                hostToServiceInstance.Remove(host);
+                hostToControlPort.Remove(host);
+                hostAddresses.Remove(host);
             }
         }
 
@@ -163,7 +503,6 @@ namespace jp.kshoji.rtpmidi
                 .Distinct()
                 .ToArray();
 
-            // Fall back to Makaretu defaults (may include AAAA) only if no IPv4 is available.
             return ipv4.Length > 0 ? ipv4 : null;
         }
 

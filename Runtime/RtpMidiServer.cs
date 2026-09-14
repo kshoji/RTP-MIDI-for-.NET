@@ -149,7 +149,7 @@ namespace jp.kshoji.rtpmidi
             }
             catch
             {
-                // Browse may be unimplemented until Phase 3.
+                // Best-effort browse stop.
             }
 
             try

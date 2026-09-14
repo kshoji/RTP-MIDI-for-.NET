@@ -4,7 +4,7 @@
 |------|------|
 | 対象リポジトリ | RTP-MIDI-for-.NET（`jp.kshoji.rtpmidi`） |
 | 作成日 | 2026-09-12 |
-| 改訂 | 2026-09-14 — Phase 0 完了（Vendor 同梱・THIRD-PARTY・Advertise プロトタイプ）。2026-09-13 — mDNS 実装を Unity-MIDI-Plugin の Makaretu.Dns（net-mdns / net-dns）に固定 |
+| 改訂 | 2026-09-15 — Phase 1 完了（定数・抽象・Fake・ユニットテスト）。2026-09-14 — Phase 0 完了（Vendor 同梱・THIRD-PARTY・Advertise プロトタイプ）。2026-09-13 — mDNS 実装を Unity-MIDI-Plugin の Makaretu.Dns（net-mdns / net-dns）に固定 |
 | 目的 | Apple Network MIDI / Tobias rtpMIDI / 主要 OSS と互換する Zeroconf 広告・発見の仕様を定義し、実装フェーズを定める |
 | 本ドキュメントの範囲 | 仕様検討・API 設計・モジュール分割・実装フェーズ・テスト計画（コード実装は別フェーズ） |
 | mDNS 実装（確定） | [net-mdns 0.27.0](https://github.com/richardschneider/net-mdns) + [net-dns 2.0.1](https://github.com/richardschneider/net-dns)（`Makaretu.Dns`）。Unity-MIDI-Plugin の Network MIDI 2.0 発見と同系統 |
@@ -307,10 +307,14 @@ server.ConnectToListener(discovered.ControlEndPoint);
 
 | パス | 役割 |
 |------|------|
-| `Runtime/Zeroconf/IRtpMidiZeroconf.cs` | 抽象インターフェース・発見 DTO・リスナー |
-| `Runtime/Zeroconf/MakaretuZeroconf.cs` | Makaretu `ServiceDiscovery` ラッパ（第一実装） |
+| `Runtime/Zeroconf/IRtpMidiZeroconf.cs` | 抽象インターフェース（`IDisposable`） |
+| `Runtime/Zeroconf/IRtpMidiServiceDiscoveryListener.cs` | 発見リスナー |
+| `Runtime/Zeroconf/RtpMidiDiscoveredService.cs` | 発見 DTO |
 | `Runtime/Zeroconf/RtpMidiDnsSdConstants.cs` | `_apple-midi._udp` 等 |
+| `Runtime/Zeroconf/FakeRtpMidiZeroconf.cs` | メモリ内フェイク（単体テスト用） |
+| `Runtime/Zeroconf/MakaretuZeroconf.cs` | Makaretu `ServiceDiscovery` ラッパ（第一実装・Phase 2+） |
 | `Runtime/Zeroconf/Vendor/`（または同等） | net-mdns 0.27.0 / net-dns 2.0.1 および推移依存のソース vendoring（Unity UPM 向け）。MIDI 2.0 の `UdpMidi2Discovery` 構成を踏襲 |
+| `Tests/RtpMidi.Zeroconf.Tests/` | フェイクベースのユニットテスト |
 | `Runtime/RtpMidiServer.cs` | ライフサイクル統合（Advertise / Browse） |
 | `Runtime/Runtime.csproj` | デスクトップ向けは NuGet（`Makaretu.Dns` / `Makaretu.Dns.Multicast`）も可。Unity はソース同梱を優先 |
 | `Documentation~/jp.kshoji.rtpmidi.md` | 利用例更新 |
@@ -370,10 +374,10 @@ Zeroconf 失敗（マルチキャスト権限なし等）はセッション待�
 | ネイティブ Bonjour 不要 | 純マネージド |
 | 空 TXT | MIDI 2.0 とは異なりキーを追加しない。相互運用で空 TXT を確認 |
 
-### Phase 1 — 定数と抽象
+### Phase 1 — 定数と抽象 — 完了 (2026-09-15)
 
-- [ ] `RtpMidiDnsSdConstants` / DTO / `IRtpMidiZeroconf` / `IRtpMidiServiceDiscoveryListener`
-- [ ] 単体テスト可能なフェイク実装（メモリ内）を用意
+- [x] `RtpMidiDnsSdConstants` / DTO / `IRtpMidiZeroconf` / `IRtpMidiServiceDiscoveryListener`
+- [x] 単体テスト可能なフェイク実装（メモリ内）を用意（`FakeRtpMidiZeroconf` + `Tests/RtpMidi.Zeroconf.Tests`）
 
 ### Phase 2 — 広告（Advertise）
 

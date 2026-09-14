@@ -1,7 +1,9 @@
 {
     "name": "jp.kshoji.rtpmidi",
     "rootNamespace": "jp.kshoji.rtpmidi",
-    "references": [],
+    "references": [
+        "jp.kshoji.rtpmidi.zeroconf.vendor"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

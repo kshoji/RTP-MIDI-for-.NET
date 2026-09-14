@@ -1,5 +1,13 @@
 # How to use this library
 
+## Third-party (Zeroconf preparation)
+
+mDNS / DNS-SD dependencies are vendored under `Runtime/Zeroconf/Vendor/` (Makaretu.Dns). See [THIRD-PARTY.md](THIRD-PARTY.md) for licenses and versions.
+
+A Phase 0 advertise smoke test lives in `Tools/ZeroconfAdvertisePrototype` (`_apple-midi._udp` with empty TXT — not Network MIDI 2.0 `_midi2._udp`).
+
+Public Zeroconf APIs on `RtpMidiServer` are planned in later phases; until then, connect with `ConnectToListener(IPEndPoint)` as below.
+
 ## Use this library with Unity
 At first, setup the library to Unity Project.
 Open the `manifest.json` for your project and add the following entry to your list of dependencies.

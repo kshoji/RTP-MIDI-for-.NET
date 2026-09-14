@@ -1,69 +1,32 @@
-using System.Linq;
-using System.Net;
 using Makaretu.Dns;
 
 namespace jp.kshoji.rtpmidi.tools;
 
 /// <summary>
-/// Phase 0 smoke test: advertise an empty-TXT <c>_apple-midi._udp</c> service.
+/// Smoke test for <see cref="MakaretuZeroconf"/> advertise (Phase 2).
 /// Verify visibility in macOS Audio MIDI Setup Directory, Tobias rtpMIDI, or <c>dns-sd -B _apple-midi._udp</c>.
 /// </summary>
 internal static class Program
 {
-    private const string ServiceType = "_apple-midi._udp";
-
     private static int Main(string[] args)
     {
-        var sessionName = args.Length > 0 ? args[0] : "RTP-MIDI Phase0 Prototype";
+        var sessionName = args.Length > 0 ? args[0] : "RTP-MIDI Phase2 Prototype";
         var controlPort = args.Length > 1 && ushort.TryParse(args[1], out var parsed) ? parsed : (ushort)5004;
 
-        Console.WriteLine($"Advertising \"{sessionName}\" as {ServiceType} on control port {controlPort}");
+        Console.WriteLine($"Advertising \"{sessionName}\" as {RtpMidiDnsSdConstants.ServiceType} on control port {controlPort}");
         Console.WriteLine("TXT: empty (no keys). Data port is control+1 by convention and is not advertised.");
         Console.WriteLine("Press Enter to withdraw and exit.");
 
-        using var discovery = new ServiceDiscovery();
-        var profile = CreateAppleMidiProfile(sessionName, controlPort);
-
+        using var zeroconf = new MakaretuZeroconf();
+        var profile = MakaretuZeroconf.CreateAppleMidiServiceProfile(sessionName, controlPort);
         PrintProfileSummary(profile);
-        discovery.Advertise(profile);
+        zeroconf.Advertise(sessionName, controlPort);
 
         Console.ReadLine();
 
-        discovery.Unadvertise(profile);
+        zeroconf.WithdrawAdvertisement();
         Console.WriteLine("Advertisement withdrawn.");
         return 0;
-    }
-
-    /// <summary>
-    /// Builds a ServiceProfile for Apple Network MIDI / rtpMIDI.
-    /// Clears the Makaretu default <c>txtvers=1</c> so TXT has no keys (interop requirement).
-    /// </summary>
-    internal static ServiceProfile CreateAppleMidiProfile(string sessionName, ushort controlPort)
-    {
-        // Prefer IPv4 link-local / unicast addresses that MulticastService already filters.
-        var ipv4 = MulticastService.GetLinkLocalAddresses()
-            .Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-            .ToArray();
-
-        var profile = new ServiceProfile(
-            sessionName,
-            ServiceType,
-            controlPort,
-            ipv4.Length > 0 ? ipv4 : null);
-
-        // ServiceProfile ctor adds TXT with "txtvers=1". Replace with an empty TXT RR (no keys).
-        foreach (var txt in profile.Resources.OfType<TXTRecord>().ToList())
-        {
-            profile.Resources.Remove(txt);
-        }
-
-        profile.Resources.Add(new TXTRecord
-        {
-            Name = profile.FullyQualifiedName,
-            Strings = { string.Empty }
-        });
-
-        return profile;
     }
 
     private static void PrintProfileSummary(ServiceProfile profile)

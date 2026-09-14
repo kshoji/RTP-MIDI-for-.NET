@@ -1,6 +1,6 @@
-# Zeroconf Advertise Prototype (Phase 0)
+# Zeroconf Advertise Prototype (Phase 2)
 
-Minimal console app that advertises `_apple-midi._udp` with an **empty TXT** (no MIDI 2.0 keys).
+Console smoke test for `MakaretuZeroconf` / `RtpMidiServer` advertise path: `_apple-midi._udp` with an **empty TXT**.
 
 ## Run
 

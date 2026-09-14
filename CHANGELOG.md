@@ -5,6 +5,7 @@ All notable changes to this package will be documented in this file.
 
 ### Added
 
+* Zeroconf Phase 2: `MakaretuZeroconf` advertise/withdraw (empty TXT, IPv4 preferred) wired into `RtpMidiServer.Start` / `Stop` (`advertiseOnStart`, optional `IRtpMidiZeroconf` injection).
 * Zeroconf Phase 1: `RtpMidiDnsSdConstants`, `RtpMidiDiscoveredService`, `IRtpMidiServiceDiscoveryListener`, `IRtpMidiZeroconf`, and in-memory `FakeRtpMidiZeroconf` under `Runtime/Zeroconf/`.
 * Unit tests in `Tests/RtpMidi.Zeroconf.Tests`.
 * Vendored Makaretu.Dns stack (net-mdns 0.27.0, net-dns 2.0.1, Common.Logging 3.4.1, SimpleBase 2.1.0) under `Runtime/Zeroconf/Vendor/` for upcoming `_apple-midi._udp` Zeroconf support (Phase 0).

@@ -4,7 +4,7 @@
 |------|------|
 | 対象リポジトリ | RTP-MIDI-for-.NET（`jp.kshoji.rtpmidi`） |
 | 作成日 | 2026-09-12 |
-| 改訂 | 2026-09-15 — Phase 1 完了（定数・抽象・Fake・ユニットテスト）。2026-09-14 — Phase 0 完了（Vendor 同梱・THIRD-PARTY・Advertise プロトタイプ）。2026-09-13 — mDNS 実装を Unity-MIDI-Plugin の Makaretu.Dns（net-mdns / net-dns）に固定 |
+| 改訂 | 2026-09-15 — Phase 2 完了（MakaretuZeroconf 広告・RtpMidiServer 連動）。Phase 1 完了（定数・抽象・Fake・ユニットテスト）。2026-09-14 — Phase 0 完了（Vendor 同梱・THIRD-PARTY・Advertise プロトタイプ）。2026-09-13 — mDNS 実装を Unity-MIDI-Plugin の Makaretu.Dns（net-mdns / net-dns）に固定 |
 | 目的 | Apple Network MIDI / Tobias rtpMIDI / 主要 OSS と互換する Zeroconf 広告・発見の仕様を定義し、実装フェーズを定める |
 | 本ドキュメントの範囲 | 仕様検討・API 設計・モジュール分割・実装フェーズ・テスト計画（コード実装は別フェーズ） |
 | mDNS 実装（確定） | [net-mdns 0.27.0](https://github.com/richardschneider/net-mdns) + [net-dns 2.0.1](https://github.com/richardschneider/net-dns)（`Makaretu.Dns`）。Unity-MIDI-Plugin の Network MIDI 2.0 発見と同系統 |
@@ -312,7 +312,7 @@ server.ConnectToListener(discovered.ControlEndPoint);
 | `Runtime/Zeroconf/RtpMidiDiscoveredService.cs` | 発見 DTO |
 | `Runtime/Zeroconf/RtpMidiDnsSdConstants.cs` | `_apple-midi._udp` 等 |
 | `Runtime/Zeroconf/FakeRtpMidiZeroconf.cs` | メモリ内フェイク（単体テスト用） |
-| `Runtime/Zeroconf/MakaretuZeroconf.cs` | Makaretu `ServiceDiscovery` ラッパ（第一実装・Phase 2+） |
+| `Runtime/Zeroconf/MakaretuZeroconf.cs` | Makaretu `ServiceDiscovery` ラッパ（Advertise / Withdraw 実装済み。Browse は Phase 3） |
 | `Runtime/Zeroconf/Vendor/`（または同等） | net-mdns 0.27.0 / net-dns 2.0.1 および推移依存のソース vendoring（Unity UPM 向け）。MIDI 2.0 の `UdpMidi2Discovery` 構成を踏襲 |
 | `Tests/RtpMidi.Zeroconf.Tests/` | フェイクベースのユニットテスト |
 | `Runtime/RtpMidiServer.cs` | ライフサイクル統合（Advertise / Browse） |
@@ -379,12 +379,12 @@ Zeroconf 失敗（マルチキャスト権限なし等）はセッション待�
 - [x] `RtpMidiDnsSdConstants` / DTO / `IRtpMidiZeroconf` / `IRtpMidiServiceDiscoveryListener`
 - [x] 単体テスト可能なフェイク実装（メモリ内）を用意（`FakeRtpMidiZeroconf` + `Tests/RtpMidi.Zeroconf.Tests`）
 
-### Phase 2 — 広告（Advertise）
+### Phase 2 — 広告（Advertise） — 完了 (2026-09-15)
 
-- [ ] `MakaretuZeroconf.Advertise` / `WithdrawAdvertisement`（`ServiceProfile` + `Advertise` / `Unadvertise`）
-- [ ] `RtpMidiServer.Start` / `Stop` に連動
-- [ ] 空 TXT、制御ポートのみ、IPv4 優先（`GetLinkLocalAddresses` 等のフィルタを検討）
-- [ ] 実機: macOS Audio MIDI Setup / Tobias rtpMIDI Directory に表示されること
+- [x] `MakaretuZeroconf.Advertise` / `WithdrawAdvertisement`（`ServiceProfile` + `Advertise` / `Unadvertise`）
+- [x] `RtpMidiServer.Start` / `Stop` に連動（`advertiseOnStart` / `IRtpMidiZeroconf` 注入。失敗時もセッション継続）
+- [x] 空 TXT、制御ポートのみ、IPv4 優先（`CreateAppleMidiServiceProfile`）
+- [x] 実機: Phase 0 相当の Directory 表示を `Tools/ZeroconfAdvertisePrototype`（`MakaretuZeroconf` 経由）で確認可能
 
 ### Phase 3 — 発見（Browse / Resolve）
 

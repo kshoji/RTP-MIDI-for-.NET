@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using Random = System.Random;
 
 namespace jp.kshoji.rtpmidi
@@ -27,6 +28,7 @@ namespace jp.kshoji.rtpmidi
         /// Zeroconf advertise or browse failed (session listen continues).
         /// </summary>
         ZeroconfException,
+        RecoveryJournalOverflowException,
     }
 
     /// <summary>
@@ -48,7 +50,7 @@ namespace jp.kshoji.rtpmidi
     {
         internal byte vpxcc;
         internal byte mpayload;
-        internal short sequenceNr;
+        internal ushort sequenceNr;
         internal int timestamp;
         internal int ssrc;
     }
@@ -87,12 +89,28 @@ namespace jp.kshoji.rtpmidi
         internal readonly IPEndPoint ControlEndPoint;
         internal readonly IPEndPoint DataEndPoint;
 
-        internal long receiverFeedbackStartTime;
-        internal bool doReceiverFeedback;
+        internal long lastReceiverFeedbackSentTime;
+        internal bool hasReceivedRtp;
 
-        internal short sendSequenceNr = (short)random.Next(1, short.MaxValue);
-        internal short receiveSequenceNr;
+        internal uint sendSequenceNrExtended = (uint)random.Next(1, short.MaxValue);
+        internal uint receiveSequenceNrExtended;
+        internal ushort sendSequenceNr => RtpSequenceNumber.Low16(sendSequenceNrExtended);
+        internal ushort receiveSequenceNr => RtpSequenceNumber.Low16(receiveSequenceNrExtended);
         internal int lostPacketCount;
+
+#if ENABLE_RTP_MIDI_JOURNAL
+        internal RtpPacketReceiveKind lastReceiveKind = RtpPacketReceiveKind.First;
+        internal ushort highestReceivedSequenceBeforePacket;
+        internal bool playMidiCommands = true;
+        internal bool applyRecoveryJournal;
+        internal ushort remoteFeedbackSequenceNr;
+        internal uint remoteFeedbackExtended;
+        internal bool hasRemoteFeedback;
+        internal long lastRtpMidiSendTime;
+        internal bool hasSentRtpMidi;
+        internal uint firstSentSequenceExtended;
+        internal bool journalOctetOverflow;
+#endif
 
         internal long lastSyncExchangeTime;
 
@@ -109,6 +127,7 @@ namespace jp.kshoji.rtpmidi
         public bool FirstMessageReceived = true;
         public long OffsetEstimate { get; set; }
         public const int MaxBufferSize = 64;
+        public const int MaxUdpPayloadSize = 1200;
 
         internal readonly LinkedList<byte> inMidiBuffer = new LinkedList<byte>();
         internal readonly LinkedList<byte> outMidiBuffer = new LinkedList<byte>();
@@ -119,6 +138,7 @@ namespace jp.kshoji.rtpmidi
 
 #if ENABLE_RTP_MIDI_JOURNAL
         internal readonly RtpMidiJournal journal;
+        internal readonly RtpMidiReceiveState receiveState;
 #endif
 
         internal RtpMidiParticipant(RtpMidiSession session, IPEndPoint endPoint)
@@ -128,6 +148,7 @@ namespace jp.kshoji.rtpmidi
             DataEndPoint = new IPEndPoint(endPoint.Address, endPoint.Port + 1);
 #if ENABLE_RTP_MIDI_JOURNAL
             journal = new RtpMidiJournal();
+            receiveState = new RtpMidiReceiveState();
 #endif
         }
     }
@@ -159,6 +180,15 @@ namespace jp.kshoji.rtpmidi
         private const int MaxSessionInvitesAttempts = 13;
 
         private const int ReceiversFeedbackThreshold = 1000;
+
+#if ENABLE_RTP_MIDI_JOURNAL
+        private const int TrailingLossIntervalMs = 50;
+        /// <summary>
+        /// Disconnect when RS stalls and unacked send sequences exceed this span.
+        /// </summary>
+        private const uint MaxUnackedJournalPackets = 512;
+        private int outboundMidiPacketsToDrop;
+#endif
 
         // The initiator must initiate a new sync exchange at least once every 60 seconds
         // as in https://developer.apple.com/library/archive/documentation/Audio/Conceptual/MIDINetworkDriverProtocol/MIDI/MIDI.html
@@ -295,20 +325,6 @@ namespace jp.kshoji.rtpmidi
             return GetParticipantBySsrc(Convert.ToInt32(deviceInfo[2]));
         }
 
-        /// <summary>
-        /// Stops all RTP MIDI connection
-        /// </summary>
-        private void SendEndSession()
-        {
-            lock (participants)
-            {
-                foreach (var participant in participants)
-                {
-                    SendEndSession(participant);
-                }
-            }
-        }
-
         private void SendEndSession(RtpMidiParticipant participant)
         {
             var endSession = new RtpMidiEndSession(0, Ssrc);
@@ -356,7 +372,29 @@ namespace jp.kshoji.rtpmidi
         /// </summary>
         public void End()
         {
-            SendEndSession();
+            List<RtpMidiParticipant> remainingParticipants;
+            lock (participants)
+            {
+                remainingParticipants = new List<RtpMidiParticipant>(participants);
+                foreach (var participant in remainingParticipants)
+                {
+#if ENABLE_RTP_MIDI_JOURNAL
+                    SendPeerIndefiniteClear(participant);
+#endif
+                    SendEndSession(participant);
+#if ENABLE_RTP_MIDI_JOURNAL
+                    ClearIndefiniteArtifacts(participant);
+#endif
+                }
+
+                participants.Clear();
+                participantsToRemove.Clear();
+            }
+
+            foreach (var participant in remainingParticipants)
+            {
+                deviceConnectionListener.OnRtpMidiDeviceDetached(GetDeviceId(participant));
+            }
 
             controlPort?.Dispose();
             controlPort = null;
@@ -379,7 +417,7 @@ namespace jp.kshoji.rtpmidi
             {
                 if (participant.outMidiBuffer.Count > 0)
                 {
-                    if (participant.outMidiBuffer.Count + 1 + 3 > RtpMidiParticipant.MaxBufferSize)
+                    if (participant.outMidiBuffer.Count + 2 > RtpMidiParticipant.MaxBufferSize)
                     {
                         WriteRtpMidiBuffer(participant);
                         participant.outMidiBuffer.Clear();
@@ -673,29 +711,21 @@ namespace jp.kshoji.rtpmidi
         {
             lock (participant.outMidiBuffer)
             {
-                // do we still have place in the buffer for 1 more character?
-                if ((participant.outMidiBuffer.Count) + 2 > RtpMidiParticipant.MaxBufferSize)
+                if (!RtpMidiCommandSection.TryAppend(
+                        participant.outMidiBuffer,
+                        datum,
+                        RtpMidiParticipant.MaxBufferSize,
+                        out var flushed))
                 {
-                    // buffer is almost full, only 1 more character
-                    if ((byte)MidiType.SystemExclusive == participant.outMidiBuffer.First?.Value)
-                    {
-                        // Add Sysex at the end of this partial SysEx (in the last available slot) ...
-                        participant.outMidiBuffer.AddLast((byte)MidiType.SystemExclusiveStart);
-
-                        WriteRtpMidi(participant);
-                        // and start again with a fresh continuation of
-                        // a next SysEx block.
-                        participant.outMidiBuffer.Clear();
-                        participant.outMidiBuffer.AddLast((byte)MidiType.SystemExclusiveEnd);
-                    }
-                    else
-                    {
-                        exceptionListener?.OnError(RtpMidiExceptionKind.BufferFullException);
-                    }
+                    exceptionListener?.OnError(RtpMidiExceptionKind.BufferFullException);
+                    participant.outMidiBuffer.AddLast(datum);
+                    return;
                 }
 
-                // store in local buffer, as we do *not* know the length of the message prior to sending
-                participant.outMidiBuffer.AddLast(datum);
+                if (flushed != null)
+                {
+                    WriteRtpMidiPacket(participant, flushed);
+                }
             }
         }
 
@@ -849,13 +879,51 @@ namespace jp.kshoji.rtpmidi
         {
             lock (participant.outMidiBuffer)
             {
-                WriteRtpMidiBuffer(participant);
+                var midiSection = new byte[participant.outMidiBuffer.Count];
+                participant.outMidiBuffer.CopyTo(midiSection, 0);
+                WriteRtpMidiPacket(participant, midiSection);
                 participant.outMidiBuffer.Clear();
             }
         }
 
         private void WriteRtpMidiBuffer(RtpMidiParticipant participant)
         {
+            var midiSection = new byte[participant.outMidiBuffer.Count];
+            participant.outMidiBuffer.CopyTo(midiSection, 0);
+            WriteRtpMidiPacket(participant, midiSection);
+        }
+
+        private void WriteRtpMidiPacket(RtpMidiParticipant participant, byte[] midiSection)
+        {
+            midiSection = midiSection ?? System.Array.Empty<byte>();
+            var bufferLen = midiSection.Length;
+#if ENABLE_RTP_MIDI_JOURNAL
+            byte[] journalData;
+            var pruneAfterSend = false;
+            var pruneCheckpoint = (ushort)0;
+            var deferJournal = false;
+            var packetSequenceI = RtpSequenceNumber.Low16(participant.sendSequenceNrExtended + 1);
+            var checkpointC = SelectSendCheckpoint(participant, packetSequenceI);
+            journalData = participant.journal.Encode(packetSequenceI, checkpointC);
+            var layout = RtpMidiPayloadBudget.Choose(bufferLen, journalData.Length);
+            if (layout == RtpMidiPayloadBudget.Layout.Overflow)
+            {
+                participant.journalOctetOverflow = true;
+                return;
+            }
+
+            deferJournal = layout == RtpMidiPayloadBudget.Layout.MidiThenJournal;
+            if (deferJournal)
+            {
+                journalData = RtpMidiJournalSection.EncodeEmpty(packetSequenceI);
+            }
+            else
+            {
+                pruneCheckpoint = checkpointC;
+                pruneAfterSend = true;
+            }
+#endif
+
             var dataStream = new MemoryStream();
 
             var rtp = new Rtp
@@ -869,9 +937,13 @@ namespace jp.kshoji.rtpmidi
             };
 
             // increment the sequenceNr
-            participant.sendSequenceNr++;
-
+            participant.sendSequenceNrExtended++;
+#if ENABLE_RTP_MIDI_JOURNAL
+            packetSequenceI = participant.sendSequenceNr;
+            rtp.sequenceNr = packetSequenceI;
+#else
             rtp.sequenceNr = participant.sendSequenceNr;
+#endif
 
             // write rtp header
             dataStream.Write(new[]
@@ -890,57 +962,109 @@ namespace jp.kshoji.rtpmidi
                 (byte)(rtp.ssrc & 0xff),
             }, 0, 12);
 
-            // Write rtpMIDI section
+            // Write rtpMIDI section. Journal is not counted in MaxBufferSize.
             byte rtpMidiFlags = 0;
-
-#if ENABLE_RTP_MIDI_JOURNAL
-            // Journal flag
-            var journalData = participant.journal.GetJournalData();
-            var hasJournalData = participant.lostPacketCount > 0 && journalData != null && journalData.Length > 0;
-            // TODO Single packet loss
-            // if (participant.lostPacketCount == 1)
-            // {
-            //     rtpMidiFlags |= 0x80;
-            // }
-
-            if (hasJournalData)
-            {
-                rtpMidiFlags |= 0x40;
-            }
-#endif
-
-            var bufferLen = participant.outMidiBuffer.Count;
             if (bufferLen < 0x0f)
             {
-                // Short header
-                rtpMidiFlags |= (byte)bufferLen;
-                rtpMidiFlags &= 0x7f; // short header, clear B flag
+                rtpMidiFlags = (byte)bufferLen;
+            }
+            else
+            {
+                rtpMidiFlags = (byte)(0x80 | (bufferLen >> 8));
+            }
+
+#if ENABLE_RTP_MIDI_JOURNAL
+            if (midiSection.Length > 0)
+            {
+                var commands = RtpMidiCommandSection.Parse(midiSection);
+                for (var i = 0; i < commands.Count; i++)
+                {
+                    participant.journal.Record(commands[i]);
+                }
+            }
+
+            rtpMidiFlags |= 0x40;
+#endif
+
+            if (bufferLen < 0x0f)
+            {
                 dataStream.Write(new[] {rtpMidiFlags}, 0, 1);
             }
             else
             {
-                // Long header
-                rtpMidiFlags |= (byte)(bufferLen >> 8);
-                rtpMidiFlags |= 0x80; // set B flag for long header
                 dataStream.Write(new[] {rtpMidiFlags, (byte)bufferLen}, 0, 2);
             }
 
             // write out the MIDI Section
-            var outMidiArray = new byte[bufferLen];
-            participant.outMidiBuffer.CopyTo(outMidiArray, 0);
-            dataStream.Write(outMidiArray, 0, bufferLen);
+            if (bufferLen > 0)
+            {
+                dataStream.Write(midiSection, 0, bufferLen);
+            }
 
 #if ENABLE_RTP_MIDI_JOURNAL
-            // write out the Journal Section
-            if (hasJournalData)
+            dataStream.Write(journalData, 0, journalData.Length);
+            // Journal for I excludes this packet's MIDI; assign pending commands to I after Encode.
+            participant.journal.CommitPending(packetSequenceI);
+            if (pruneAfterSend)
             {
-                dataStream.Write(journalData, 0, journalData.Length);
-                participant.journal.IncrementSequenceNumber();
+                participant.journal.PruneBefore(pruneCheckpoint);
             }
+
+            if (!participant.hasSentRtpMidi)
+            {
+                participant.firstSentSequenceExtended = participant.sendSequenceNrExtended;
+            }
+
+            participant.hasSentRtpMidi = true;
+            participant.lastRtpMidiSendTime = RtpMidiClock.Ticks();
+            var dropMidi = bufferLen > 0 && ConsumeOutboundMidiDrop();
+            if (!dropMidi)
+            {
+                dataPort?.Send(dataStream.ToArray(), (int)dataStream.Length, participant.DataEndPoint);
+            }
+
+            if (deferJournal)
+            {
+                WriteRtpMidiPacket(participant, System.Array.Empty<byte>());
+            }
+
+            return;
 #endif
 
             dataPort?.Send(dataStream.ToArray(), (int)dataStream.Length, participant.DataEndPoint);
         }
+
+#if ENABLE_RTP_MIDI_JOURNAL
+        /// <summary>
+        /// Arms a drop of the next MIDI-bearing RTP packets. Sequence and journal still advance.
+        /// Empty trailing-loss packets are not dropped, so they can still repair the skipped packet.
+        /// </summary>
+        internal void DropNextOutboundMidiPackets(int count)
+        {
+            if (count < 0)
+            {
+                count = 0;
+            }
+
+            Interlocked.Exchange(ref outboundMidiPacketsToDrop, count);
+        }
+
+        internal int OutboundMidiPacketsToDrop
+        {
+            get { return Interlocked.CompareExchange(ref outboundMidiPacketsToDrop, 0, 0); }
+        }
+
+        private bool ConsumeOutboundMidiDrop()
+        {
+            if (Interlocked.Decrement(ref outboundMidiPacketsToDrop) >= 0)
+            {
+                return true;
+            }
+
+            Interlocked.Increment(ref outboundMidiPacketsToDrop);
+            return false;
+        }
+#endif
 
         internal void ManageSessionInvites()
         {
@@ -1006,8 +1130,7 @@ namespace jp.kshoji.rtpmidi
                 {
                     foreach (var participant in participantsToRemove)
                     {
-                        participants.Remove(participant);
-                        deviceConnectionListener.OnRtpMidiDeviceDetached(GetDeviceId(participant));
+                        RemoveParticipant(participant);
                     }
                     participantsToRemove.Clear();
                 }
@@ -1018,30 +1141,72 @@ namespace jp.kshoji.rtpmidi
         {
             foreach (var participant in participants)
             {
-                if (participant.ssrc == 0)
+                if (participant.ssrc == 0 || !participant.hasReceivedRtp)
                 {
                     continue;
                 }
 
-                if (!participant.doReceiverFeedback)
+                if (RtpMidiClock.Ticks() - participant.lastReceiverFeedbackSentTime < ReceiversFeedbackThreshold)
                 {
                     continue;
                 }
 
-                if (RtpMidiClock.Ticks() - participant.receiverFeedbackStartTime > ReceiversFeedbackThreshold)
+                var rf = new RtpMidiReceiverFeedback
                 {
-                    var rf = new RtpMidiReceiverFeedback
+                    Ssrc = Ssrc,
+                    // AppleMIDI RS carries the low 16 bits of the extended receive sequence.
+                    SequenceNr = participant.receiveSequenceNr,
+                };
+                WriteReceiverFeedback(participant.ControlEndPoint, rf);
+                participant.lastReceiverFeedbackSentTime = RtpMidiClock.Ticks();
+            }
+        }
+
+#if ENABLE_RTP_MIDI_JOURNAL
+        /// <summary>
+        /// Sends MIDI LEN=0 recovery-journal packets so a trailing loss can still be repaired.
+        /// </summary>
+        internal void ManageTrailingLoss()
+        {
+            lock (participants)
+            {
+                foreach (var participant in participants)
+                {
+                    if (participant.ssrc == 0 || participant.invitationStatus != InviteStatus.Connected)
                     {
-                        Ssrc = Ssrc,
-                        SequenceNr = participant.receiveSequenceNr,
-                    };
-                    WriteReceiverFeedback(participant.ControlEndPoint, rf);
+                        continue;
+                    }
 
-                    // reset the clock. It is started when we receive MIDI
-                    participant.doReceiverFeedback = false;
+                    if (!participant.hasSentRtpMidi || participant.journal.HistoryCount == 0)
+                    {
+                        continue;
+                    }
+
+                    lock (participant.outMidiBuffer)
+                    {
+                        if (participant.outMidiBuffer.Count > 0)
+                        {
+                            continue;
+                        }
+                    }
+
+                    // Stop once the peer's RS (extended M(k)) has caught up to our last sent sequence.
+                    if (participant.hasRemoteFeedback &&
+                        participant.remoteFeedbackExtended >= participant.sendSequenceNrExtended)
+                    {
+                        continue;
+                    }
+
+                    if (RtpMidiClock.Ticks() - participant.lastRtpMidiSendTime < TrailingLossIntervalMs)
+                    {
+                        continue;
+                    }
+
+                    WriteRtpMidi(participant);
                 }
             }
         }
+#endif
 
         internal void ManageSynchronization()
         {
@@ -1061,10 +1226,24 @@ namespace jp.kshoji.rtpmidi
                             continue;
                         }
 
+#if ENABLE_RTP_MIDI_JOURNAL
+                        if (ShouldDisconnectForJournalOverflow(participant))
+                        {
+                            SendPeerIndefiniteClear(participant);
+                            SendEndSession(participant);
+                            participantsToRemove.Add(participant);
+                            exceptionListener?.OnError(RtpMidiExceptionKind.RecoveryJournalOverflowException);
+                            continue;
+                        }
+#endif
+
                         if (participant.kind == ParticipantKind.Listener)
                         {
                             if (RtpMidiClock.Ticks() - participant.lastSyncExchangeTime > CkMaxTimeOut)
                             {
+#if ENABLE_RTP_MIDI_JOURNAL
+                                SendPeerIndefiniteClear(participant);
+#endif
                                 SendEndSession(participant);
                                 participantsToRemove.Add(participant);
                                 exceptionListener?.OnError(RtpMidiExceptionKind.ListenerTimeOutException);
@@ -1091,8 +1270,7 @@ namespace jp.kshoji.rtpmidi
                 {
                     foreach (var participant in participantsToRemove)
                     {
-                        participants.Remove(participant);
-                        deviceConnectionListener.OnRtpMidiDeviceDetached(GetDeviceId(participant));
+                        RemoveParticipant(participant);
                     }
                     participantsToRemove.Clear();
                 }
@@ -1105,6 +1283,9 @@ namespace jp.kshoji.rtpmidi
             {
                 if (participant.synchronizationCount > MaxSynchronizationCk0Attempts)
                 {
+#if ENABLE_RTP_MIDI_JOURNAL
+                    SendPeerIndefiniteClear(participant);
+#endif
                     SendEndSession(participant);
                     return true;
                 }
@@ -1154,8 +1335,7 @@ namespace jp.kshoji.rtpmidi
             {
                 lock (participants)
                 {
-                    participants.Remove(participant);
-                    deviceConnectionListener.OnRtpMidiDeviceDetached(GetDeviceId(participant));
+                    RemoveParticipant(participant);
                 }
             }
         }
@@ -1277,8 +1457,7 @@ namespace jp.kshoji.rtpmidi
             {
                 lock (participants)
                 {
-                    participants.Remove(participant);
-                    deviceConnectionListener.OnRtpMidiDeviceDetached(GetDeviceId(participant));
+                    RemoveParticipant(participant);
                 }
             }
         }
@@ -1296,7 +1475,18 @@ namespace jp.kshoji.rtpmidi
                 return;
             }
 
-            if (participant.sendSequenceNr < receiverFeedback.SequenceNr)
+#if ENABLE_RTP_MIDI_JOURNAL
+            var previous = participant.hasRemoteFeedback
+                ? participant.remoteFeedbackExtended
+                : participant.sendSequenceNrExtended;
+            participant.remoteFeedbackExtended = RtpMidiCheckpointPolicy.ExtendReceiverFeedback(
+                previous,
+                receiverFeedback.SequenceNr);
+            participant.remoteFeedbackSequenceNr = RtpSequenceNumber.Low16(participant.remoteFeedbackExtended);
+            participant.hasRemoteFeedback = true;
+#endif
+
+            if (RtpSequenceNumber.IsAheadOf(receiverFeedback.SequenceNr, participant.sendSequenceNr))
             {
                 exceptionListener?.OnError(RtpMidiExceptionKind.SendPacketsDropped);
             }
@@ -1330,125 +1520,101 @@ namespace jp.kshoji.rtpmidi
         /// </summary>
         public void ReceivedMidi(RtpMidiParticipant participant, MidiType midiType, byte[] data)
         {
+#if ENABLE_RTP_MIDI_JOURNAL
+            if (IsSysExSegment(midiType, data))
+            {
+                if (!participant.receiveState.PushSysEx(data, out var finished) || finished == null)
+                {
+                    return;
+                }
+
+                rtpMidiEventHandler?.OnMidiSystemExclusive(GetDeviceId(participant), finished);
+                return;
+            }
+
+            participant.receiveState.ObserveMidi(midiType, data);
+#endif
             switch (midiType)
             {
                 case MidiType.NoteOff:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordChannelJournal(data[0] & 0xf, new RtpMidiJournal.RtpMidiJournalChapterNote(data[1], 0));
-#endif
                     rtpMidiEventHandler?.OnMidiNoteOff(GetDeviceId(participant), data[0] & 0xf, data[1], data[2]);
                     break;
                 case MidiType.NoteOn:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordChannelJournal(data[0] & 0xf, new RtpMidiJournal.RtpMidiJournalChapterNote(data[1], data[2]));
-#endif
                     rtpMidiEventHandler?.OnMidiNoteOn(GetDeviceId(participant), data[0] & 0xf, data[1], data[2]);
                     break;
                 case MidiType.AfterTouchPoly:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordChannelJournal(data[0] & 0xf, new RtpMidiJournal.RtpMidiJournalChapterPolyphonicAftertouch(data[1], data[2]));
-#endif
                     rtpMidiEventHandler?.OnMidiPolyphonicAftertouch(GetDeviceId(participant), data[0] & 0xf, data[1], data[2]);
                     break;
                 case MidiType.ControlChange:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    if (data[1] == 0)
-                    {
-                        // bank msb
-                        participant.journal.RecordChannelJournal(data[0] & 0xf, new RtpMidiJournal.RtpMidiJournalChapterProgramChange(null, data[2], null));
-                    }
-                    if (data[1] == 32)
-                    {
-                        // bank lsb
-                        participant.journal.RecordChannelJournal(data[0] & 0xf, new RtpMidiJournal.RtpMidiJournalChapterProgramChange(null, null, data[2]));
-                    }
-
-                    participant.journal.RecordChannelJournal(data[0] & 0xf, new RtpMidiJournal.RtpMidiJournalChapterControlChange(data[1], data[2]));
-#endif
                     rtpMidiEventHandler?.OnMidiControlChange(GetDeviceId(participant), data[0] & 0xf, data[1], data[2]);
                     break;
                 case MidiType.ProgramChange:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordChannelJournal(data[0] & 0xf, new RtpMidiJournal.RtpMidiJournalChapterProgramChange(data[1], null, null));
-#endif
                     rtpMidiEventHandler?.OnMidiProgramChange(GetDeviceId(participant), data[0] & 0xf, data[1]);
                     break;
                 case MidiType.AfterTouchChannel:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordChannelJournal(data[0] & 0xf, new RtpMidiJournal.RtpMidiJournalChapterChannelAftertouch(data[1]));
-#endif
                     rtpMidiEventHandler?.OnMidiChannelAftertouch(GetDeviceId(participant), data[0] & 0xf, data[1]);
                     break;
                 case MidiType.PitchBend:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordChannelJournal(data[0] & 0xf, new RtpMidiJournal.RtpMidiJournalChapterPitchWheel((short)(data[1] | (data[2] << 7))));
-#endif
                     rtpMidiEventHandler?.OnMidiPitchWheel(GetDeviceId(participant), data[0] & 0xf, data[1] | (data[2] << 7));
                     break;
                 case MidiType.SystemExclusive:
-                    // TODO record journal information
                     rtpMidiEventHandler?.OnMidiSystemExclusive(GetDeviceId(participant), data);
                     break;
                 case MidiType.TimeCodeQuarterFrame:
-                    // TODO record journal information
-                    rtpMidiEventHandler?.OnMidiTimeCodeQuarterFrame(GetDeviceId(participant), data[0]);
+                    // data[0] is the status byte. The timing nibble follows it, same as journal recovery.
+                    if (data.Length >= 2)
+                    {
+                        rtpMidiEventHandler?.OnMidiTimeCodeQuarterFrame(GetDeviceId(participant), data[1]);
+                    }
                     break;
                 case MidiType.SongPosition:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordSystemJournal(new RtpMidiJournal.RtpMidiJournalChapterSequencerStateCommands(midiType, data[0] | (data[1] << 7)));
-#endif
-                    rtpMidiEventHandler?.OnMidiSongPositionPointer(GetDeviceId(participant), data[0] | (data[1] << 7));
+                    if (data.Length >= 3)
+                    {
+                        rtpMidiEventHandler?.OnMidiSongPositionPointer(GetDeviceId(participant), data[1] | (data[2] << 7));
+                    }
                     break;
                 case MidiType.SongSelect:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordSystemJournal(new RtpMidiJournal.RtpMidiJournalChapterSimpleSystemCommands(midiType, data[0]));
-#endif
-                    rtpMidiEventHandler?.OnMidiSongSelect(GetDeviceId(participant), data[0]);
+                    if (data.Length >= 2)
+                    {
+                        rtpMidiEventHandler?.OnMidiSongSelect(GetDeviceId(participant), data[1]);
+                    }
                     break;
                 case MidiType.TuneRequest:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordSystemJournal(new RtpMidiJournal.RtpMidiJournalChapterSimpleSystemCommands(midiType));
-#endif
                     rtpMidiEventHandler?.OnMidiTuneRequest(GetDeviceId(participant));
                     break;
                 case MidiType.Clock:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordSystemJournal(new RtpMidiJournal.RtpMidiJournalChapterSequencerStateCommands(midiType));
-#endif
                     rtpMidiEventHandler?.OnMidiTimingClock(GetDeviceId(participant));
                     break;
                 case MidiType.Start:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordSystemJournal(new RtpMidiJournal.RtpMidiJournalChapterSequencerStateCommands(midiType));
-#endif
                     rtpMidiEventHandler?.OnMidiStart(GetDeviceId(participant));
                     break;
                 case MidiType.Continue:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordSystemJournal(new RtpMidiJournal.RtpMidiJournalChapterSequencerStateCommands(midiType));
-#endif
                     rtpMidiEventHandler?.OnMidiContinue(GetDeviceId(participant));
                     break;
                 case MidiType.Stop:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordSystemJournal(new RtpMidiJournal.RtpMidiJournalChapterSequencerStateCommands(midiType));
-#endif
                     rtpMidiEventHandler?.OnMidiStop(GetDeviceId(participant));
                     break;
                 case MidiType.ActiveSensing:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordSystemJournal(new RtpMidiJournal.RtpMidiJournalChapterActiveSenseCommand());
-#endif
                     rtpMidiEventHandler?.OnMidiActiveSensing(GetDeviceId(participant));
                     break;
                 case MidiType.SystemReset:
-#if ENABLE_RTP_MIDI_JOURNAL
-                    participant.journal.RecordSystemJournal(new RtpMidiJournal.RtpMidiJournalChapterSimpleSystemCommands(midiType));
-#endif
                     rtpMidiEventHandler?.OnMidiReset(GetDeviceId(participant));
                     break;
             }
         }
+
+#if ENABLE_RTP_MIDI_JOURNAL
+        private static bool IsSysExSegment(MidiType midiType, byte[] data)
+        {
+            if (data == null || data.Length < 2)
+            {
+                return false;
+            }
+
+            return midiType == MidiType.SystemExclusive || midiType == MidiType.SystemExclusiveEnd ||
+                   data[0] == 0xf0 || data[0] == 0xf7;
+        }
+#endif
 
         /// <summary>
         /// Process received RTP data
@@ -1456,36 +1622,256 @@ namespace jp.kshoji.rtpmidi
         public void ReceivedRtp(Rtp rtp)
         {
             var participant = GetParticipantBySsrc(rtp.ssrc);
-            if (participant != null)
+            if (participant == null)
             {
-                if (!participant.doReceiverFeedback)
-                {
-                    participant.receiverFeedbackStartTime = RtpMidiClock.Ticks();
-                    participant.doReceiverFeedback = true;
-                }
+                return;
+            }
 
-                var offset = rtp.timestamp - participant.OffsetEstimate;
-                var latency = (int)RtpMidiClock.Ticks() - offset;
-                if (participant.FirstMessageReceived)
+#if ENABLE_RTP_MIDI_JOURNAL
+            var kind = RtpMidiReceivePolicy.Classify(participant.FirstMessageReceived, participant.receiveSequenceNr, rtp.sequenceNr);
+            participant.lastReceiveKind = kind;
+            participant.playMidiCommands = RtpMidiReceivePolicy.ShouldPlayMidi(kind);
+            participant.applyRecoveryJournal = RtpMidiReceivePolicy.ShouldApplyJournal(kind);
+
+            if (kind == RtpPacketReceiveKind.Reordered)
+            {
+                participant.lostPacketCount = 0;
+                participant.hasReceivedRtp = true;
+                return;
+            }
+
+            if (participant.FirstMessageReceived)
+            {
+                participant.FirstMessageReceived = false;
+                participant.receiveSequenceNrExtended = rtp.sequenceNr;
+                participant.highestReceivedSequenceBeforePacket = rtp.sequenceNr;
+                participant.lostPacketCount = 0;
+            }
+            else
+            {
+                var highestBefore = participant.receiveSequenceNr;
+                participant.highestReceivedSequenceBeforePacket = highestBefore;
+                participant.receiveSequenceNrExtended = RtpSequenceNumber.Extend(participant.receiveSequenceNrExtended, rtp.sequenceNr);
+                var delta = RtpSequenceNumber.SerialDelta(highestBefore, rtp.sequenceNr);
+                participant.lostPacketCount = delta > 1 ? delta - 1 : 0;
+                if (participant.lostPacketCount > 0)
                 {
-                    // avoids first message to generate sequence exception
-                    // as we do not know the last sequenceNr received.
-                    participant.FirstMessageReceived = false;
+                    exceptionListener?.OnError(RtpMidiExceptionKind.ReceivedPacketsDropped);
                 }
-                else
+            }
+
+            participant.hasReceivedRtp = true;
+#else
+            if (participant.FirstMessageReceived)
+            {
+                // avoids first message to generate sequence exception
+                // as we do not know the last sequenceNr received.
+                participant.FirstMessageReceived = false;
+                participant.receiveSequenceNrExtended = rtp.sequenceNr;
+            }
+            else
+            {
+                var previous = participant.receiveSequenceNr;
+                participant.receiveSequenceNrExtended = RtpSequenceNumber.Extend(participant.receiveSequenceNrExtended, rtp.sequenceNr);
+                var delta = RtpSequenceNumber.SerialDelta(previous, rtp.sequenceNr);
+                participant.lostPacketCount = delta > 1 ? delta - 1 : 0;
+                if (participant.lostPacketCount > 0)
                 {
-                    var lostPacketCount = rtp.sequenceNr - participant.receiveSequenceNr - 1;
-                    participant.lostPacketCount = lostPacketCount;
-                    if (lostPacketCount > 0)
+                    // Packet loss detected
+                    // see C.2.2.2.  The closed-loop Sending Policy
+                    exceptionListener?.OnError(RtpMidiExceptionKind.ReceivedPacketsDropped);
+                }
+            }
+
+            participant.hasReceivedRtp = true;
+#endif
+        }
+
+#if ENABLE_RTP_MIDI_JOURNAL
+        private static ushort SelectSendCheckpoint(RtpMidiParticipant participant, ushort packetSequenceI)
+        {
+            var hasSessionStart = participant.journal.TryGetSessionStartSequence(out var sessionStart);
+            return RtpMidiCheckpointPolicy.SelectCheckpoint(
+                packetSequenceI,
+                participant.hasRemoteFeedback,
+                participant.remoteFeedbackExtended,
+                hasSessionStart,
+                sessionStart,
+                participant.journal);
+        }
+
+        private static bool ShouldDisconnectForJournalOverflow(RtpMidiParticipant participant)
+        {
+            if (participant.journalOctetOverflow)
+            {
+                return true;
+            }
+
+            if (!participant.hasSentRtpMidi)
+            {
+                return false;
+            }
+
+            var span = RtpMidiCheckpointPolicy.UnackedPacketSpan(
+                participant.sendSequenceNrExtended,
+                participant.hasRemoteFeedback,
+                participant.remoteFeedbackExtended,
+                true,
+                participant.firstSentSequenceExtended);
+
+            return span > MaxUnackedJournalPackets;
+        }
+
+        /// <summary>
+        /// Applies the recovery journal as a delta against receive-side history (RFC 6295 §4).
+        /// </summary>
+        internal void ApplyRecoveryJournal(RtpMidiParticipant participant, byte[] journal, int length)
+        {
+            if (participant == null || journal == null || length < RtpMidiJournalSection.HeaderLength)
+            {
+                return;
+            }
+
+            if (participant.lastReceiveKind == RtpPacketReceiveKind.Loss)
+            {
+                var checkpoint = RtpMidiJournalSection.GetCheckpointPacketSeqnum(journal);
+                if (!RtpMidiReceivePolicy.CheckpointCoversLoss(checkpoint, participant.highestReceivedSequenceBeforePacket))
+                {
+                    ClearIndefiniteArtifacts(participant);
+                    return;
+                }
+            }
+
+            if (!RtpMidiNoteJournal.TryDecode(journal, length, out var recovered))
+            {
+                return;
+            }
+
+            var delta = participant.receiveState.Diff(recovered);
+            for (var i = 0; i < delta.Count; i++)
+            {
+                EmitRecovered(participant, delta[i]);
+            }
+        }
+
+        private void EmitRecovered(RtpMidiParticipant participant, RecoveredMidi command)
+        {
+            if (rtpMidiEventHandler == null)
+            {
+                return;
+            }
+
+            var deviceId = GetDeviceId(participant);
+            switch (command.Type)
+            {
+                case MidiType.NoteOff:
+                    rtpMidiEventHandler.OnMidiNoteOff(deviceId, command.Channel, command.Data1, command.Data2);
+                    break;
+                case MidiType.NoteOn:
+                    rtpMidiEventHandler.OnMidiNoteOn(deviceId, command.Channel, command.Data1, command.Data2);
+                    break;
+                case MidiType.ControlChange:
+                    rtpMidiEventHandler.OnMidiControlChange(deviceId, command.Channel, command.Data1, command.Data2);
+                    break;
+                case MidiType.ProgramChange:
+                    rtpMidiEventHandler.OnMidiProgramChange(deviceId, command.Channel, command.Data1);
+                    break;
+                case MidiType.AfterTouchPoly:
+                    rtpMidiEventHandler.OnMidiPolyphonicAftertouch(deviceId, command.Channel, command.Data1, command.Data2);
+                    break;
+                case MidiType.AfterTouchChannel:
+                    rtpMidiEventHandler.OnMidiChannelAftertouch(deviceId, command.Channel, command.Data1);
+                    break;
+                case MidiType.PitchBend:
+                    rtpMidiEventHandler.OnMidiPitchWheel(deviceId, command.Channel, command.Data1 | (command.Data2 << 7));
+                    break;
+                case MidiType.SystemExclusive:
+                    if (command.Payload != null)
                     {
-                        // Packet loss detected
-                        // see C.2.2.2.  The closed-loop Sending Policy
-                        exceptionListener?.OnError(RtpMidiExceptionKind.ReceivedPacketsDropped);
+                        rtpMidiEventHandler.OnMidiSystemExclusive(deviceId, command.Payload);
+                    }
+
+                    break;
+                case MidiType.TimeCodeQuarterFrame:
+                    rtpMidiEventHandler.OnMidiTimeCodeQuarterFrame(deviceId, command.Data1);
+                    break;
+                case MidiType.SongSelect:
+                    rtpMidiEventHandler.OnMidiSongSelect(deviceId, command.Data1);
+                    break;
+                case MidiType.SongPosition:
+                    rtpMidiEventHandler.OnMidiSongPositionPointer(deviceId, command.Data1 | (command.Data2 << 7));
+                    break;
+                case MidiType.TuneRequest:
+                    rtpMidiEventHandler.OnMidiTuneRequest(deviceId);
+                    break;
+                case MidiType.Clock:
+                    rtpMidiEventHandler.OnMidiTimingClock(deviceId);
+                    break;
+                case MidiType.Start:
+                    rtpMidiEventHandler.OnMidiStart(deviceId);
+                    break;
+                case MidiType.Continue:
+                    rtpMidiEventHandler.OnMidiContinue(deviceId);
+                    break;
+                case MidiType.Stop:
+                    rtpMidiEventHandler.OnMidiStop(deviceId);
+                    break;
+                case MidiType.ActiveSensing:
+                    rtpMidiEventHandler.OnMidiActiveSensing(deviceId);
+                    break;
+                case MidiType.SystemReset:
+                    rtpMidiEventHandler.OnMidiReset(deviceId);
+                    break;
+            }
+        }
+
+        private void SendPeerIndefiniteClear(RtpMidiParticipant participant)
+        {
+            if (participant == null ||
+                !RtpMidiIndefiniteState.ShouldNotifyPeer(false, participant.invitationStatus == InviteStatus.Connected))
+            {
+                return;
+            }
+
+            try
+            {
+                lock (participant.outMidiBuffer)
+                {
+                    if (participant.outMidiBuffer.Count > 0)
+                    {
+                        WriteRtpMidiBuffer(participant);
+                        participant.outMidiBuffer.Clear();
                     }
                 }
 
-                participant.receiveSequenceNr = rtp.sequenceNr;
+                var sections = RtpMidiCommandSection.Pack(
+                    RtpMidiIndefiniteState.PeerClearCommands(),
+                    RtpMidiParticipant.MaxBufferSize);
+                for (var i = 0; i < sections.Count; i++)
+                {
+                    WriteRtpMidiPacket(participant, sections[i]);
+                }
             }
+            catch
+            {
+                // RFC 6295 §3.5 SHOULD: if the peer-clear packet cannot be sent, proceed to BY.
+            }
+        }
+
+        private void ClearIndefiniteArtifacts(RtpMidiParticipant participant)
+        {
+            RtpMidiIndefiniteState.Clear(rtpMidiEventHandler, GetDeviceId(participant));
+            participant.receiveState.ObserveIndefiniteClear();
+        }
+#endif
+
+        private void RemoveParticipant(RtpMidiParticipant participant)
+        {
+#if ENABLE_RTP_MIDI_JOURNAL
+            ClearIndefiniteArtifacts(participant);
+#endif
+            participants.Remove(participant);
+            deviceConnectionListener.OnRtpMidiDeviceDetached(GetDeviceId(participant));
         }
     }
 }

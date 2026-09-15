@@ -237,6 +237,27 @@ namespace jp.kshoji.rtpmidi
             ownsZeroconf = true;
         }
 
+#if ENABLE_RTP_MIDI_JOURNAL
+        /// <summary>
+        /// Drops the next outbound RTP-MIDI packets that contain MIDI data.
+        /// Sequence numbers and the recovery journal still advance, so a later packet can repair the loss.
+        /// Control packets and empty trailing-loss journal packets are not dropped.
+        /// </summary>
+        /// <param name="count">number of MIDI-bearing packets to skip</param>
+        public void DropNextOutboundMidiPackets(int count)
+        {
+            session.DropNextOutboundMidiPackets(count);
+        }
+
+        /// <summary>
+        /// Remaining MIDI-bearing packets that will be encoded and then not sent.
+        /// </summary>
+        public int OutboundMidiPacketsToDrop
+        {
+            get { return session.OutboundMidiPacketsToDrop; }
+        }
+#endif
+
         /// <summary>
         /// Send a Note On message
         /// </summary>
@@ -448,40 +469,49 @@ namespace jp.kshoji.rtpmidi
                 thread = new Thread(() =>
                 {
                     IsRunning = true;
-
-                    session.Begin();
-                    while (IsRunning)
+                    try
                     {
-                        session.ManageSessionInvites();
-                        session.ReadDataPackets();
-
-                        foreach (var participant in session.participants)
+                        session.Begin();
+                        while (IsRunning)
                         {
-                            var length = session.Available(participant);
-                            for (var i = 0; i < length; i++)
+                            session.ManageSessionInvites();
+                            session.ReadDataPackets();
+
+                            foreach (var participant in session.participants)
                             {
-                                session.Read(participant);
+                                var length = session.Available(participant);
+                                for (var i = 0; i < length; i++)
+                                {
+                                    session.Read(participant);
+                                }
                             }
-                        }
 
-                        if (session.ReadControlPackets() > 0)
-                        {
-                            session.ParseControlPackets();
-                        }
-
-                        session.ManageReceiverFeedback();
-                        session.ManageSynchronization();
-
-                        // wait for next data
-                        if (thread != null)
-                        {
-                            lock (thread)
+                            if (session.ReadControlPackets() > 0)
                             {
-                                Monitor.Wait(thread, 10);
+                                session.ParseControlPackets();
+                            }
+
+                            session.ManageReceiverFeedback();
+#if ENABLE_RTP_MIDI_JOURNAL
+                            session.ManageTrailingLoss();
+#endif
+                            session.ManageSynchronization();
+
+                            // wait for next data
+                            if (thread != null)
+                            {
+                                lock (thread)
+                                {
+                                    Monitor.Wait(thread, 10);
+                                }
                             }
                         }
                     }
-                    session.End();
+                    finally
+                    {
+                        session.End();
+                        IsRunning = false;
+                    }
                 });
                 
                 thread.Start();
@@ -493,6 +523,10 @@ namespace jp.kshoji.rtpmidi
                 lock (thread)
                 {
                     Monitor.PulseAll(thread);
+                }
+                if (thread != Thread.CurrentThread)
+                {
+                    thread.Join();
                 }
             }
         }

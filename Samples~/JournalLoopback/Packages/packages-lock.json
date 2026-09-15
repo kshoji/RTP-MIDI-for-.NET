@@ -1,0 +1,16 @@
+{
+  "dependencies": {
+    "com.unity.modules.imgui": {
+      "version": "1.0.0",
+      "depth": 0,
+      "source": "builtin",
+      "dependencies": {}
+    },
+    "jp.kshoji.midisystem": {
+      "version": "file:../../../",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {}
+    }
+  }
+}

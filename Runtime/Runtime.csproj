@@ -5,6 +5,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>warnings</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Default on. Pass -p:EnableRtpMidiJournal=false to omit RFC 6295 recovery journals. -->
+    <EnableRtpMidiJournal Condition="'$(EnableRtpMidiJournal)' == ''">true</EnableRtpMidiJournal>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EnableRtpMidiJournal)' == 'true'">
+    <DefineConstants>$(DefineConstants);ENABLE_RTP_MIDI_JOURNAL</DefineConstants>
   </PropertyGroup>
 
 </Project>

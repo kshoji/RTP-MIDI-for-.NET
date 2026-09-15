@@ -107,3 +107,23 @@ rtpMidiServer.SendMidiNoteOn(deviceId, 0, 64, 127);
 rtpMidiServer.StopDiscovery();
 rtpMidiServer.Stop(); // withdraws Zeroconf advertise and stops UDP session
 ```
+
+## Recovery Journal
+
+MIDI packets include an RFC 6295 Recovery Journal by default: **default chapter semantics**, a **closed-loop** checkpoint, and AppleMIDI Recovery Journal Setting (`RS`) as the receiver report. Packets that carry a journal set `J=1`.
+
+The journal exists so lost packets do not leave stuck notes or controllers. The receiver repairs from the difference between the journal and MIDI it has already applied. On a locally initiated disconnect, the library sends All Sound Off, Reset All Controllers, and All Notes Off on every channel before AppleMIDI `BY` when the data port can still send.
+
+### Disable
+
+- SDK / `dotnet build`: pass `-p:EnableRtpMidiJournal=false`.
+- Unity: remove `-define:ENABLE_RTP_MIDI_JOURNAL` from `Runtime/csc.rsp` (and `Runtime/mcs.rsp` on Unity 2018.4). Those files turn the feature on for the package assembly.
+
+### Not supported
+
+- Enhanced Chapter C (`H=1`). Chapter C is encoded with default semantics (`H=0`).
+- SDP session-description relaxations such as `j_update` and `ch_never` (open-loop / anchor send policies). Session control is AppleMIDI (`IN` / `OK` / `BY` / `CK` / `RS`) only.
+
+### Sample
+
+`Samples~/JournalLoopback` is a localhost AppleMIDI loopback Unity project. It checks handshake, live MIDI with journals, repair after a dropped packet, trailing-journal recovery, and disconnect cleanup.

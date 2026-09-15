@@ -307,40 +307,46 @@ namespace jp.kshoji.rtpmidi
                 thread = new Thread(() =>
                 {
                     IsRunning = true;
-
-                    session.Begin();
-                    while (IsRunning)
+                    try
                     {
-                        session.ManageSessionInvites();
-                        session.ReadDataPackets();
-
-                        foreach (var participant in session.participants)
+                        session.Begin();
+                        while (IsRunning)
                         {
-                            var length = session.Available(participant);
-                            for (var i = 0; i < length; i++)
+                            session.ManageSessionInvites();
+                            session.ReadDataPackets();
+
+                            foreach (var participant in session.participants)
                             {
-                                session.Read(participant);
+                                var length = session.Available(participant);
+                                for (var i = 0; i < length; i++)
+                                {
+                                    session.Read(participant);
+                                }
                             }
-                        }
 
-                        if (session.ReadControlPackets() > 0)
-                        {
-                            session.ParseControlPackets();
-                        }
-
-                        session.ManageReceiverFeedback();
-                        session.ManageSynchronization();
-
-                        // wait for next data
-                        if (thread != null)
-                        {
-                            lock (thread)
+                            if (session.ReadControlPackets() > 0)
                             {
-                                Monitor.Wait(thread, 10);
+                                session.ParseControlPackets();
+                            }
+
+                            session.ManageReceiverFeedback();
+                            session.ManageSynchronization();
+
+                            // wait for next data
+                            if (thread != null)
+                            {
+                                lock (thread)
+                                {
+                                    Monitor.Wait(thread, 10);
+                                }
                             }
                         }
                     }
-                    session.End();
+                    finally
+                    {
+                        session.End();
+                        IsRunning = false;
+                    }
                 });
                 
                 thread.Start();
@@ -352,6 +358,10 @@ namespace jp.kshoji.rtpmidi
                 lock (thread)
                 {
                     Monitor.PulseAll(thread);
+                }
+                if (thread != Thread.CurrentThread)
+                {
+                    thread.Join();
                 }
             }
         }

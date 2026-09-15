@@ -5,15 +5,16 @@ All notable changes to this package will be documented in this file.
 
 ### Added
 
-* Zeroconf Phase 5: harden duplicate-name browse keys, NIC re-advertise, `ZeroconfException` notification, interop checklist, and `Tools/ZeroconfSessionSample`.
-* Zeroconf Phase 4: `RtpMidiServer.StartDiscovery` / `StopDiscovery`, docs/README updates, and AppleMIDI invitation `SessionName` (UTF-8 NUL-terminated on IN/OK).
-* Zeroconf Phase 3: `MakaretuZeroconf` browse/resolve for `_apple-midi._udp` (SRV→A/AAAA, IPv4 preferred, self-exclusion) with `RtpMidiZeroconfHelpers`.
-* Zeroconf Phase 2: `MakaretuZeroconf` advertise/withdraw (empty TXT, IPv4 preferred) wired into `RtpMidiServer.Start` / `Stop` (`advertiseOnStart`, optional `IRtpMidiZeroconf` injection).
-* Zeroconf Phase 1: `RtpMidiDnsSdConstants`, `RtpMidiDiscoveredService`, `IRtpMidiServiceDiscoveryListener`, `IRtpMidiZeroconf`, and in-memory `FakeRtpMidiZeroconf` under `Runtime/Zeroconf/`.
-* Unit tests in `Tests/RtpMidi.Zeroconf.Tests`.
-* Vendored Makaretu.Dns stack (net-mdns 0.27.0, net-dns 2.0.1, Common.Logging 3.4.1, SimpleBase 2.1.0) under `Runtime/Zeroconf/Vendor/` for upcoming `_apple-midi._udp` Zeroconf support (Phase 0).
-* Third-party notices in `Documentation~/THIRD-PARTY.md` and README.
-* `Tools/ZeroconfAdvertisePrototype` console smoke test (empty TXT, control port only).
+* Zeroconf (`_apple-midi._udp`) advertise / browse via Makaretu.Dns:
+  * `RtpMidiDnsSdConstants`, `RtpMidiDiscoveredService`, `IRtpMidiServiceDiscoveryListener`, `IRtpMidiZeroconf`, `FakeRtpMidiZeroconf`, `MakaretuZeroconf`, `RtpMidiZeroconfHelpers`
+  * `RtpMidiServer` advertise on `Start` / withdraw on `Stop`, plus `StartDiscovery` / `StopDiscovery`
+  * Empty TXT, IPv4 preferred, self-exclusion, FQDN-keyed browse results, NIC re-advertise, `ZeroconfException` notification
+  * AppleMIDI invitation `SessionName` (UTF-8 NUL-terminated on IN/OK)
+* Vendored Makaretu.Dns stack (net-mdns 0.27.0, net-dns 2.0.1, Common.Logging 3.4.1, SimpleBase 2.1.0) under `Runtime/Zeroconf/Vendor/`
+* Unit tests in `Tests/RtpMidi.Zeroconf.Tests`
+* Third-party notices in `Documentation~/THIRD-PARTY.md` and README
+* `Tools/ZeroconfAdvertisePrototype` and `Tools/ZeroconfSessionSample`
+* Interop checklist in `Documentation~/Zeroconf-Interop-Checklist.md`
 
 ## [1.0.0] - 2022-05-08
 

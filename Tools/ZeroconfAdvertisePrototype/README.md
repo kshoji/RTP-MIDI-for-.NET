@@ -1,4 +1,4 @@
-# Zeroconf Advertise Prototype (Phase 2)
+# Zeroconf Advertise Prototype
 
 Console smoke test for `MakaretuZeroconf` / `RtpMidiServer` advertise path: `_apple-midi._udp` with an **empty TXT**.
 

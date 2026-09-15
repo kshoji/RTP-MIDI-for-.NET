@@ -3,14 +3,14 @@ using Makaretu.Dns;
 namespace jp.kshoji.rtpmidi.tools;
 
 /// <summary>
-/// Smoke test for <see cref="MakaretuZeroconf"/> advertise (Phase 2).
+/// Smoke test for <see cref="MakaretuZeroconf"/> advertise.
 /// Verify visibility in macOS Audio MIDI Setup Directory, Tobias rtpMIDI, or <c>dns-sd -B _apple-midi._udp</c>.
 /// </summary>
 internal static class Program
 {
     private static int Main(string[] args)
     {
-        var sessionName = args.Length > 0 ? args[0] : "RTP-MIDI Phase2 Prototype";
+        var sessionName = args.Length > 0 ? args[0] : "RTP-MIDI Advertise Prototype";
         var controlPort = args.Length > 1 && ushort.TryParse(args[1], out var parsed) ? parsed : (ushort)5004;
 
         Console.WriteLine($"Advertising \"{sessionName}\" as {RtpMidiDnsSdConstants.ServiceType} on control port {controlPort}");

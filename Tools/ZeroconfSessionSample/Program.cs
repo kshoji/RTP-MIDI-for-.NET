@@ -3,7 +3,7 @@ using jp.kshoji.rtpmidi;
 namespace jp.kshoji.rtpmidi.tools;
 
 /// <summary>
-/// Phase 5 console sample: advertise + browse via <see cref="RtpMidiServer"/>.
+/// Console sample: advertise + browse via <see cref="RtpMidiServer"/>.
 /// Does not auto-connect; prints discovered control endpoints for manual verification.
 /// </summary>
 internal static class Program

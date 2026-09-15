@@ -4,7 +4,7 @@ namespace jp.kshoji.rtpmidi
 {
     /// <summary>
     /// Pluggable DNS-SD advertise / browse for RTP-MIDI.
-    /// First implementation will use Makaretu.Dns; tests can inject <see cref="FakeRtpMidiZeroconf"/>.
+    /// Default implementation is <see cref="MakaretuZeroconf"/>; tests can inject <see cref="FakeRtpMidiZeroconf"/>.
     /// </summary>
     public interface IRtpMidiZeroconf : IDisposable
     {

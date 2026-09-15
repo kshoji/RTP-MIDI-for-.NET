@@ -1,4 +1,4 @@
-# Zeroconf Session Sample (Phase 5)
+# Zeroconf Session Sample
 
 Console sample that uses `RtpMidiServer` to:
 

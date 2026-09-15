@@ -10,7 +10,7 @@ The library implements [RFC 6295](https://datatracker.ietf.org/doc/html/rfc6295)
 - AppleMIDI session control (`IN` / `OK` / `NO` / `BY` / `CK` / `RS`) and RTP-MIDI transport
 - RFC 6295 Recovery Journal (on by default; disable with `-p:EnableRtpMidiJournal=false`)
 - Optional Zeroconf advertise / browse for `_apple-midi._udp` (Makaretu.Dns / net-mdns)
-- Manual `ConnectToListener(IPEndPoint)` remains available for non-Bonjour devices
+- Manual `ConnectToListener(IPEndPoint)` / `DisconnectFromListener(IPEndPoint)` for non-Bonjour devices
 
 ## Quick start (Zeroconf)
 

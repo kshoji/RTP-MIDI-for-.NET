@@ -82,6 +82,11 @@ rtpMidiServer.StopDiscovery();
 rtpMidiServer.ConnectToListener(new IPEndPoint(IPAddress.Parse("192.168.0.100"), 5004));
 ```
 
+To close that session later (sends peer-clear when journaling is enabled, then AppleMIDI `BY`, and raises detach):
+```cs
+rtpMidiServer.DisconnectFromListener(new IPEndPoint(IPAddress.Parse("192.168.0.100"), 5004));
+```
+
 ## Receive MIDI events
 ```cs
 class MidiEventHandler : IRtpMidiEventHandler

@@ -21,3 +21,4 @@ Press Enter to withdraw and exit.
 - Discovery does **not** call `ConnectToListener` automatically (avoids accidental self/loop connections).
 - Zeroconf failures raise `RtpMidiExceptionKind.ZeroconfException` but do not stop UDP listen.
 - Manual connect: `server.ConnectToListener(new IPEndPoint(...))`.
+- Manual disconnect: `server.DisconnectFromListener(new IPEndPoint(...))`.

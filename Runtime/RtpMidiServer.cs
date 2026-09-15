@@ -96,6 +96,15 @@ namespace jp.kshoji.rtpmidi
         }
 
         /// <summary>
+        /// Disconnect from the another RTP MIDI Listener endpoint
+        /// </summary>
+        /// <param name="endPoint">control endpoint previously passed to <see cref="ConnectToListener"/></param>
+        public void DisconnectFromListener(IPEndPoint endPoint)
+        {
+            session.SendEndSession(endPoint);
+        }
+
+        /// <summary>
         /// Starts browsing for remote <c>_apple-midi._udp</c> sessions.
         /// Independent of <see cref="Start"/> advertise; failures do not stop the session.
         /// </summary>

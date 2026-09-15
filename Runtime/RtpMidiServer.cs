@@ -96,6 +96,27 @@ namespace jp.kshoji.rtpmidi
             rtpMidiThread = null;
         }
 
+#if ENABLE_RTP_MIDI_JOURNAL
+        /// <summary>
+        /// Drops the next outbound RTP-MIDI packets that contain MIDI data.
+        /// Sequence numbers and the recovery journal still advance, so a later packet can repair the loss.
+        /// Control packets and empty trailing-loss journal packets are not dropped.
+        /// </summary>
+        /// <param name="count">number of MIDI-bearing packets to skip</param>
+        public void DropNextOutboundMidiPackets(int count)
+        {
+            session.DropNextOutboundMidiPackets(count);
+        }
+
+        /// <summary>
+        /// Remaining MIDI-bearing packets that will be encoded and then not sent.
+        /// </summary>
+        public int OutboundMidiPacketsToDrop
+        {
+            get { return session.OutboundMidiPacketsToDrop; }
+        }
+#endif
+
         /// <summary>
         /// Send a Note On message
         /// </summary>
@@ -330,6 +351,9 @@ namespace jp.kshoji.rtpmidi
                             }
 
                             session.ManageReceiverFeedback();
+#if ENABLE_RTP_MIDI_JOURNAL
+                            session.ManageTrailingLoss();
+#endif
                             session.ManageSynchronization();
 
                             // wait for next data

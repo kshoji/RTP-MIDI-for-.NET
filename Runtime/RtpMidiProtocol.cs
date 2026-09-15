@@ -144,14 +144,14 @@
     /// </summary>
     public struct RtpMidiReceiverFeedback
     {
-        public RtpMidiReceiverFeedback(int ssrc, short sequenceNr)
+        public RtpMidiReceiverFeedback(int ssrc, ushort sequenceNr)
         {
             Ssrc = ssrc;
             SequenceNr = sequenceNr;
         }
 
         public int Ssrc { get; set; }
-        public short SequenceNr { get; set; }
+        public ushort SequenceNr { get; set; }
     }
 
     /// <summary>

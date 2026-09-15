@@ -28,6 +28,12 @@ namespace jp.kshoji.rtpmidi
     {
         private RtpMidiThread rtpMidiThread;
         private readonly RtpMidiSession session;
+        private readonly string sessionName;
+        private readonly int listenPort;
+        private readonly bool advertiseOnStart;
+        private IRtpMidiZeroconf zeroconf;
+        private bool ownsZeroconf;
+        private IRtpMidiExceptionListener exceptionListener;
 
         /// <summary>
         /// Obtains the name of session, and ssid from deviceId
@@ -41,14 +47,41 @@ namespace jp.kshoji.rtpmidi
         }
 
         /// <summary>
+        /// Sets an exception listener for session and Zeroconf failures.
+        /// </summary>
+        /// <param name="listener">the exception callback</param>
+        public void SetRtpMidiExceptionListener(IRtpMidiExceptionListener listener)
+        {
+            exceptionListener = listener;
+            session.SetRtpMidiExceptionListener(listener);
+        }
+
+        /// <summary>
         /// Constructor
         /// </summary>
         /// <param name="sessionName">the session name</param>
         /// <param name="listenPort">UDP control port(0-65534)</param>
         /// <param name="deviceConnectionListener">device connection listener</param>
         /// <param name="rtpMidiEventHandler">MIDI event handler</param>
-        public RtpMidiServer(string sessionName, int listenPort, IRtpMidiDeviceConnectionListener deviceConnectionListener, IRtpMidiEventHandler rtpMidiEventHandler)
+        /// <param name="zeroconf">
+        /// Optional Zeroconf implementation. When null and <paramref name="advertiseOnStart"/> is true,
+        /// <see cref="MakaretuZeroconf"/> is created on <see cref="Start"/>.
+        /// </param>
+        /// <param name="advertiseOnStart">When true, advertises <c>_apple-midi._udp</c> on <see cref="Start"/>.</param>
+        public RtpMidiServer(
+            string sessionName,
+            int listenPort,
+            IRtpMidiDeviceConnectionListener deviceConnectionListener,
+            IRtpMidiEventHandler rtpMidiEventHandler,
+            IRtpMidiZeroconf zeroconf = null,
+            bool advertiseOnStart = true)
         {
+            this.sessionName = sessionName;
+            this.listenPort = listenPort;
+            this.advertiseOnStart = advertiseOnStart;
+            this.zeroconf = zeroconf;
+            ownsZeroconf = false;
+
             session = new RtpMidiSession(sessionName, listenPort, deviceConnectionListener);
             session.SetMidiEventListener(rtpMidiEventHandler);
         }
@@ -63,6 +96,44 @@ namespace jp.kshoji.rtpmidi
         }
 
         /// <summary>
+        /// Starts browsing for remote <c>_apple-midi._udp</c> sessions.
+        /// Independent of <see cref="Start"/> advertise; failures do not stop the session.
+        /// </summary>
+        /// <param name="listener">Discovery callbacks (Appeared / Disappeared).</param>
+        public void StartDiscovery(IRtpMidiServiceDiscoveryListener listener)
+        {
+            if (listener == null)
+            {
+                throw new System.ArgumentNullException(nameof(listener));
+            }
+
+            try
+            {
+                EnsureZeroconf();
+                zeroconf.StartBrowse(listener);
+            }
+            catch
+            {
+                exceptionListener?.OnError(RtpMidiExceptionKind.ZeroconfException);
+            }
+        }
+
+        /// <summary>
+        /// Stops browsing for remote sessions. Does not withdraw local advertisement.
+        /// </summary>
+        public void StopDiscovery()
+        {
+            try
+            {
+                zeroconf?.StopBrowse();
+            }
+            catch
+            {
+                // Best-effort browse stop.
+            }
+        }
+
+        /// <summary>
         /// Starts the service thread
         /// </summary>
         public void Start()
@@ -70,6 +141,10 @@ namespace jp.kshoji.rtpmidi
             if (rtpMidiThread == null)
             {
                 rtpMidiThread = new RtpMidiThread(session);
+                if (advertiseOnStart)
+                {
+                    TryAdvertise();
+                }
             }
         }
 
@@ -92,8 +167,74 @@ namespace jp.kshoji.rtpmidi
         /// </summary>
         public void Stop()
         {
+            TryStopZeroconf();
             rtpMidiThread?.Stop();
             rtpMidiThread = null;
+        }
+
+        private void TryAdvertise()
+        {
+            try
+            {
+                EnsureZeroconf();
+                zeroconf.Advertise(sessionName, listenPort);
+            }
+            catch
+            {
+                exceptionListener?.OnError(RtpMidiExceptionKind.ZeroconfException);
+            }
+        }
+
+        private void TryStopZeroconf()
+        {
+            if (zeroconf == null)
+            {
+                return;
+            }
+
+            try
+            {
+                zeroconf.StopBrowse();
+            }
+            catch
+            {
+                // Best-effort browse stop.
+            }
+
+            try
+            {
+                zeroconf.WithdrawAdvertisement();
+            }
+            catch
+            {
+                // Best-effort withdraw.
+            }
+
+            if (ownsZeroconf)
+            {
+                try
+                {
+                    zeroconf.Dispose();
+                }
+                catch
+                {
+                    // Ignore dispose failures.
+                }
+
+                zeroconf = null;
+                ownsZeroconf = false;
+            }
+        }
+
+        private void EnsureZeroconf()
+        {
+            if (zeroconf != null)
+            {
+                return;
+            }
+
+            zeroconf = new MakaretuZeroconf();
+            ownsZeroconf = true;
         }
 
 #if ENABLE_RTP_MIDI_JOURNAL

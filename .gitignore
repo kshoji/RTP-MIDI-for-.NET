@@ -372,4 +372,20 @@ MigrationBackup/
 
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
-.idea
+.idea/
+
+# Local Unity / IDE (when this UPM package root is opened as a project)
+UserSettings/
+Library/
+Logs/
+Temp/
+Obj/
+Build/
+Builds/
+MemoryCaptures/
+build~/
+Assets/
+ProjectSettings/
+Packages/
+*.csproj.user
+
